@@ -33,6 +33,7 @@ public final class CommunityStructureChat {
 	private static final int POLL_TICKS = 40;
 	private static final Gson GSON = new Gson();
 	private static final HttpClient HTTP = HttpClient.newBuilder()
+		.version(HttpClient.Version.HTTP_1_1)
 		.connectTimeout(Duration.ofSeconds(4))
 		.followRedirects(HttpClient.Redirect.NORMAL)
 		.build();
@@ -117,6 +118,7 @@ public final class CommunityStructureChat {
 			return;
 		}
 		HttpRequest request = HttpRequest.newBuilder(apiUri(config, "/api/chat/messages"))
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("content-type", "application/json; charset=utf-8")
 			.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(message), StandardCharsets.UTF_8))
@@ -159,7 +161,7 @@ public final class CommunityStructureChat {
 		UUID playerId = player.getUuid();
 		LiveChatConnection existing = LIVE_CONNECTIONS.get(playerId);
 		if (existing != null && existing.usable()) {
-			return existing.open();
+			return true;
 		}
 		if (existing != null) {
 			LIVE_CONNECTIONS.remove(playerId, existing);
@@ -181,7 +183,7 @@ public final class CommunityStructureChat {
 					CommunityStructures.LOGGER.debug("Could not open structure chat live connection", throwable);
 				}
 			});
-		return false;
+		return true;
 	}
 
 	private static void pollPlayer(MinecraftServer server, UUID playerId) {
@@ -189,9 +191,10 @@ public final class CommunityStructureChat {
 		if (config == null) {
 			return;
 		}
-		long after = LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, 0L);
+		long after = LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, Long.MAX_VALUE);
 		URI uri = apiUri(config, "/api/chat/messages?playerId=" + encode(playerId.toString()) + "&after=" + after);
 		HttpRequest request = HttpRequest.newBuilder(uri)
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
 			.GET()

@@ -52,6 +52,7 @@ public final class CommunityStructureCapture {
 	private static final DateTimeFormatter NAME_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
 	private static final Gson GSON = new Gson();
 	private static final HttpClient HTTP = HttpClient.newBuilder()
+		.version(HttpClient.Version.HTTP_1_1)
 		.connectTimeout(Duration.ofSeconds(4))
 		.followRedirects(HttpClient.Redirect.NORMAL)
 		.build();
@@ -283,6 +284,7 @@ public final class CommunityStructureCapture {
 		}
 
 		HttpRequest request = HttpRequest.newBuilder(apiUri(config, "/api/structures/capture"))
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(15))
 			.header("content-type", "application/octet-stream")
 			.header("x-structure-name", safeHeader(name))

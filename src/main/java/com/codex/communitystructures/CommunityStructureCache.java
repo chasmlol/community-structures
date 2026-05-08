@@ -47,6 +47,7 @@ public final class CommunityStructureCache {
 		this.config = config;
 		this.cacheRoot = FabricLoader.getInstance().getConfigDir().resolve("community_structures").resolve("cache");
 		this.client = HttpClient.newBuilder()
+			.version(HttpClient.Version.HTTP_1_1)
 			.connectTimeout(Duration.ofSeconds(4))
 			.followRedirects(HttpClient.Redirect.NORMAL)
 			.build();
@@ -276,6 +277,7 @@ public final class CommunityStructureCache {
 	private RemoteStructure fetchStructure(String id) throws IOException, InterruptedException {
 		URI uri = apiUri("/api/structures/" + URLEncoder.encode(id, StandardCharsets.UTF_8));
 		HttpRequest request = HttpRequest.newBuilder(uri)
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
 			.GET()
@@ -293,6 +295,7 @@ public final class CommunityStructureCache {
 	private void downloadRandom(StructureCategory category) throws IOException, InterruptedException {
 		URI randomUri = apiUri("/api/structures/random?category=" + category.apiName() + excludeQuery(category));
 		HttpRequest randomRequest = HttpRequest.newBuilder(randomUri)
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
 			.GET()
@@ -318,6 +321,7 @@ public final class CommunityStructureCache {
 
 		URI downloadUri = apiUri(remote.downloadUrl());
 		HttpRequest downloadRequest = HttpRequest.newBuilder(downloadUri)
+			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(20))
 			.GET()
 			.build();
