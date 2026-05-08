@@ -26,6 +26,8 @@ public final class CommunityStructuresClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
+		CommunityStructuresUpdateChecker.register();
+
 		captureKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 			"key.community_structures.capture",
 			InputUtil.Type.KEYSYM,
@@ -40,6 +42,8 @@ public final class CommunityStructuresClient implements ClientModInitializer {
 		));
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			CommunityStructuresUpdateChecker.tick(client);
+
 			while (captureKey.wasPressed()) {
 				if (ClientPlayNetworking.canSend(CommunityStructureCapturePackets.CaptureActionPayload.ID)) {
 					ClientPlayNetworking.send(new CommunityStructureCapturePackets.CaptureActionPayload(CommunityStructureCapturePackets.ACTION_TOGGLE));
