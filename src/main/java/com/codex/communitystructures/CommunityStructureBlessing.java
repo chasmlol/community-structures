@@ -106,7 +106,6 @@ public final class CommunityStructureBlessing {
 
 		CommunityStructureConfig config = CommunityStructures.config();
 		if (config == null) {
-			giveBack(sender, stacks);
 			sender.sendMessage(Text.literal("Blessing failed: config is not loaded."), false);
 			return;
 		}
@@ -123,13 +122,11 @@ public final class CommunityStructureBlessing {
 			.whenComplete((response, throwable) -> server.execute(() -> {
 				if (throwable != null) {
 					CommunityStructures.LOGGER.warn("Could not post structure blessing", throwable);
-					giveBack(sender, stacks);
-					sender.sendMessage(Text.literal("Blessing failed: " + throwable.getMessage()), false);
+					sender.sendMessage(Text.literal("Blessing could not be sent and the offered items were consumed."), false);
 					return;
 				}
 				if (response.statusCode() / 100 != 2) {
-					giveBack(sender, stacks);
-					sender.sendMessage(Text.literal("Blessing failed: server returned HTTP " + response.statusCode()), false);
+					sender.sendMessage(Text.literal("Blessing was rejected by the server and the offered items were consumed."), false);
 					return;
 				}
 				sender.sendMessage(Text.literal("Blessing sent to " + safeName(instance.creatorName()) + "."), false);
@@ -204,14 +201,6 @@ public final class CommunityStructureBlessing {
 					CommunityStructures.LOGGER.debug("Could not claim blessing {}", id, throwable);
 				}
 			});
-	}
-
-	private static void giveBack(ServerPlayerEntity player, List<ItemStack> stacks) {
-		for (ItemStack stack : stacks) {
-			if (!stack.isEmpty()) {
-				deliverStack(player, stack);
-			}
-		}
 	}
 
 	private static URI apiUri(CommunityStructureConfig config, String path) {
@@ -304,10 +293,9 @@ public final class CommunityStructureBlessing {
 				handled = true;
 				List<ItemStack> stacks = new ArrayList<>();
 				for (int slot = 0; slot < blessingInventory.size(); slot++) {
-					ItemStack stack = blessingInventory.getStack(slot);
+					ItemStack stack = blessingInventory.removeStack(slot);
 					if (!stack.isEmpty()) {
-						stacks.add(stack.copy());
-						blessingInventory.setStack(slot, ItemStack.EMPTY);
+						stacks.add(stack);
 					}
 				}
 				sendBlessing(serverPlayer, instance, stacks);
