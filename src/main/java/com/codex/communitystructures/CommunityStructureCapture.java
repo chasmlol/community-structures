@@ -50,6 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CommunityStructureCapture {
 	private static final int SELECTION_SIZE = 20;
 	private static final int SELECTION_HEIGHT = 20;
+	private static final int MIN_CAPTURE_BLOCKS = 5;
 	private static final int SELECTION_NEGATIVE_RADIUS = (SELECTION_SIZE - 1) / 2;
 	private static final int SELECTION_POSITIVE_RADIUS = SELECTION_SIZE / 2;
 	private static final DateTimeFormatter NAME_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
@@ -178,6 +179,10 @@ public final class CommunityStructureCapture {
 			player.sendMessage(Text.literal(capture.mode().emptyMessage()), false);
 			return;
 		}
+		if (selected.blocks().size() < MIN_CAPTURE_BLOCKS) {
+			player.sendMessage(Text.literal("Selected " + selected.blocks().size() + " " + capture.mode().label() + ". Structures need at least " + MIN_CAPTURE_BLOCKS + " blocks to upload. Press J to cancel."), false);
+			return;
+		}
 		String lootNote = selected.lootContainers() > CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS
 			? " " + selected.lootContainers() + " loot containers are included; only 2 will get generated loot."
 			: " Loot containers are included; up to 2 will get generated loot.";
@@ -195,6 +200,10 @@ public final class CommunityStructureCapture {
 		CapturedStructure selected = collect(player.getServerWorld(), capture);
 		if (selected.blocks().isEmpty()) {
 			player.sendMessage(Text.literal(capture.mode().cancelMessage()), false);
+			return;
+		}
+		if (selected.blocks().size() < MIN_CAPTURE_BLOCKS) {
+			player.sendMessage(Text.literal("Capture cancelled: structures need at least " + MIN_CAPTURE_BLOCKS + " blocks. This selection only has " + selected.blocks().size() + "."), false);
 			return;
 		}
 		Optional<NonVanillaBlock> nonVanillaBlock = firstNonVanillaBlock(selected);
