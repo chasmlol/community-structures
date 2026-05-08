@@ -1,6 +1,7 @@
 package com.codex.communitystructures;
 
 import com.google.gson.Gson;
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.network.message.SignedMessage;
@@ -16,7 +17,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,8 +35,10 @@ public final class CommunityStructureChat {
 	private static final double CHAT_RADIUS = 10.0D;
 	private static final long ACTIVE_ROOM_TTL_MILLIS = 5 * 60 * 1000L;
 	private static final long LIVE_RECONNECT_DELAY_MILLIS = 5000L;
+	private static final long NO_HISTORY_BACKLOG = Long.MAX_VALUE;
 	private static final int POLL_TICKS = 40;
 	private static final Gson GSON = new Gson();
+	private static final Path CHAT_STATE_PATH = FabricLoader.getInstance().getConfigDir().resolve("community_structures").resolve("chat-state.json");
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 		.version(HttpClient.Version.HTTP_1_1)
 		.connectTimeout(Duration.ofSeconds(4))
@@ -42,12 +49,14 @@ public final class CommunityStructureChat {
 	private static final Map<UUID, ActiveRoom> ACTIVE_ROOMS = new ConcurrentHashMap<>();
 	private static final Map<UUID, LiveChatConnection> LIVE_CONNECTIONS = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> NEXT_LIVE_RECONNECT_AT = new ConcurrentHashMap<>();
+	private static volatile boolean chatStateLoaded;
 	private static int tickCounter;
 
 	private CommunityStructureChat() {
 	}
 
 	public static void register() {
+		loadChatState();
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(CommunityStructureChat::onChatMessage);
 		ServerTickEvents.END_SERVER_TICK.register(CommunityStructureChat::pollMessages);
 	}
@@ -176,7 +185,7 @@ public final class CommunityStructureChat {
 		LiveChatConnection connection = new LiveChatConnection(server, playerId);
 		LIVE_CONNECTIONS.put(playerId, connection);
 		HTTP.newWebSocketBuilder()
-			.buildAsync(liveChatUri(config, playerId.toString(), LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, 0L)), connection)
+			.buildAsync(liveChatUri(config, playerId.toString(), lastSeenForRequest(playerId)), connection)
 			.whenComplete((webSocket, throwable) -> {
 				if (throwable != null) {
 					LIVE_CONNECTIONS.remove(playerId, connection);
@@ -191,7 +200,7 @@ public final class CommunityStructureChat {
 		if (config == null) {
 			return;
 		}
-		long after = LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, Long.MAX_VALUE);
+		long after = lastSeenForRequest(playerId);
 		URI uri = apiUri(config, "/api/chat/messages?playerId=" + encode(playerId.toString()) + "&after=" + after);
 		HttpRequest request = HttpRequest.newBuilder(uri)
 			.version(HttpClient.Version.HTTP_1_1)
@@ -285,7 +294,77 @@ public final class CommunityStructureChat {
 			sendChatLine(player, message.fromName, message.text);
 			ACTIVE_ROOMS.put(player.getUuid(), ActiveRoom.fromIncoming(message));
 		}
-		LAST_SEEN_MESSAGE_ID.put(player.getUuid(), lastSeen);
+		updateLastSeen(player.getUuid(), lastSeen);
+	}
+
+	private static long lastSeenForRequest(UUID playerId) {
+		loadChatState();
+		return LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, NO_HISTORY_BACKLOG);
+	}
+
+	private static void updateLastSeen(UUID playerId, long lastSeen) {
+		long previous = LAST_SEEN_MESSAGE_ID.getOrDefault(playerId, -1L);
+		if (lastSeen <= previous) {
+			return;
+		}
+		LAST_SEEN_MESSAGE_ID.put(playerId, lastSeen);
+		saveChatState();
+	}
+
+	private static void loadChatState() {
+		if (chatStateLoaded) {
+			return;
+		}
+		synchronized (CommunityStructureChat.class) {
+			if (chatStateLoaded) {
+				return;
+			}
+			chatStateLoaded = true;
+			if (!Files.exists(CHAT_STATE_PATH)) {
+				return;
+			}
+			try (var reader = Files.newBufferedReader(CHAT_STATE_PATH)) {
+				ChatState state = GSON.fromJson(reader, ChatState.class);
+				if (state == null || state.lastSeenMessageIds == null) {
+					return;
+				}
+				for (Map.Entry<String, Long> entry : state.lastSeenMessageIds.entrySet()) {
+					try {
+						UUID playerId = UUID.fromString(entry.getKey());
+						long lastSeen = entry.getValue() == null ? 0L : entry.getValue();
+						if (lastSeen > 0L) {
+							LAST_SEEN_MESSAGE_ID.put(playerId, lastSeen);
+						}
+					} catch (IllegalArgumentException ignored) {
+					}
+				}
+			} catch (IOException | RuntimeException exception) {
+				CommunityStructures.LOGGER.debug("Could not load structure chat state {}", CHAT_STATE_PATH, exception);
+			}
+		}
+	}
+
+	private static synchronized void saveChatState() {
+		try {
+			Files.createDirectories(CHAT_STATE_PATH.getParent());
+			ChatState state = new ChatState();
+			for (Map.Entry<UUID, Long> entry : LAST_SEEN_MESSAGE_ID.entrySet()) {
+				if (entry.getValue() != null && entry.getValue() > 0L) {
+					state.lastSeenMessageIds.put(entry.getKey().toString(), entry.getValue());
+				}
+			}
+			Path temp = CHAT_STATE_PATH.resolveSibling(CHAT_STATE_PATH.getFileName() + ".tmp");
+			try (var writer = Files.newBufferedWriter(temp)) {
+				GSON.toJson(state, writer);
+			}
+			try {
+				Files.move(temp, CHAT_STATE_PATH, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException atomicMoveException) {
+				Files.move(temp, CHAT_STATE_PATH, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException exception) {
+			CommunityStructures.LOGGER.debug("Could not save structure chat state {}", CHAT_STATE_PATH, exception);
+		}
 	}
 
 	private static boolean shouldDeliver(ServerPlayerEntity player, IncomingChatMessage message) {
@@ -502,6 +581,10 @@ public final class CommunityStructureChat {
 		private List<IncomingChatMessage> messages;
 		private CommunityStructureBlessing.IncomingBlessing blessing;
 		private List<CommunityStructureBlessing.IncomingBlessing> blessings;
+	}
+
+	private static final class ChatState {
+		private Map<String, Long> lastSeenMessageIds = new HashMap<>();
 	}
 
 	private static final class IncomingChatMessage {
