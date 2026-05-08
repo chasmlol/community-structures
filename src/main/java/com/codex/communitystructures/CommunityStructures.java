@@ -24,6 +24,7 @@ public final class CommunityStructures implements ModInitializer {
 		CommunityStructureCapture.register();
 		CommunityStructureChat.register();
 		CommunityStructureBlessing.register();
+		CommunityStructureDeathHunt.register();
 
 		ServerLifecycleEvents.SERVER_STARTING.register(server -> cache.start());
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {

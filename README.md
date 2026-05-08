@@ -45,3 +45,5 @@ Use `/bless` while standing within 10 blocks of a generated community structure 
 Structure cache requests include the local player's UUID and name in request headers so the API can apply per-account download limits, with IP limits as a fallback for unknown clients.
 
 Downloaded structures stay in the local cache instead of being consumed. The mod prefers structures it has never generated before; when the API has no new structures outside the local cache, it reuses a random eligible cached structure as a fallback.
+
+When a player dies without keep-inventory enabled, the mod can send a death recovery event through the API. Another live modded player gets a named zombie wearing the dead player's head; killing it before the timer expires returns the dead player's saved inventory, offhand, armor, selected hotbar slot, and XP.

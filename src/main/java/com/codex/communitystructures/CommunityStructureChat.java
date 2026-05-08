@@ -262,6 +262,20 @@ public final class CommunityStructureChat {
 		if (envelope.blessings != null && !envelope.blessings.isEmpty()) {
 			blessings.addAll(envelope.blessings);
 		}
+		List<CommunityStructureDeathHunt.IncomingDeathHunt> deathHunts = new ArrayList<>();
+		if (envelope.deathHunt != null) {
+			deathHunts.add(envelope.deathHunt);
+		}
+		if (envelope.deathHunts != null && !envelope.deathHunts.isEmpty()) {
+			deathHunts.addAll(envelope.deathHunts);
+		}
+		List<CommunityStructureDeathHunt.IncomingDeathReturn> deathReturns = new ArrayList<>();
+		if (envelope.deathReturn != null) {
+			deathReturns.add(envelope.deathReturn);
+		}
+		if (envelope.deathReturns != null && !envelope.deathReturns.isEmpty()) {
+			deathReturns.addAll(envelope.deathReturns);
+		}
 
 		ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
 		if (player != null) {
@@ -270,6 +284,12 @@ public final class CommunityStructureChat {
 			}
 			if (!blessings.isEmpty()) {
 				CommunityStructureBlessing.receiveBlessings(player, blessings);
+			}
+			if (!deathHunts.isEmpty()) {
+				CommunityStructureDeathHunt.receiveDeathHunts(player, deathHunts);
+			}
+			if (!deathReturns.isEmpty()) {
+				CommunityStructureDeathHunt.receiveDeathReturns(player, deathReturns);
 			}
 		}
 	}
@@ -581,6 +601,10 @@ public final class CommunityStructureChat {
 		private List<IncomingChatMessage> messages;
 		private CommunityStructureBlessing.IncomingBlessing blessing;
 		private List<CommunityStructureBlessing.IncomingBlessing> blessings;
+		private CommunityStructureDeathHunt.IncomingDeathHunt deathHunt;
+		private List<CommunityStructureDeathHunt.IncomingDeathHunt> deathHunts;
+		private CommunityStructureDeathHunt.IncomingDeathReturn deathReturn;
+		private List<CommunityStructureDeathHunt.IncomingDeathReturn> deathReturns;
 	}
 
 	private static final class ChatState {
