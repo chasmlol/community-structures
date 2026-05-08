@@ -21,7 +21,10 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.HoverEvent;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
 import java.io.IOException;
@@ -155,7 +158,9 @@ public final class CommunityStructureBlessing {
 			}
 			deliverStack(player, stack);
 			deliveredAny = true;
-			player.sendMessage(Text.literal(safeName(blessing.fromName) + " sent you " + itemSummary(stack) + "."), false);
+			player.sendMessage(Text.literal(safeName(blessing.fromName) + " sent you ")
+				.append(itemHoverText(stack))
+				.append(Text.literal(".")), false);
 		}
 
 		if (deliveredAny) {
@@ -218,6 +223,12 @@ public final class CommunityStructureBlessing {
 	private static String itemSummary(ItemStack stack) {
 		String name = stack.getName().getString();
 		return stack.getCount() > 1 ? stack.getCount() + "x " + name : name;
+	}
+
+	private static MutableText itemHoverText(ItemStack stack) {
+		return Text.literal("[" + itemSummary(stack) + "]")
+			.formatted(Formatting.YELLOW)
+			.styled(style -> style.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackContent(stack))));
 	}
 
 	private record OutgoingBlessing(
