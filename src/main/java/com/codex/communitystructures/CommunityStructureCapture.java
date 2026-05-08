@@ -15,11 +15,13 @@ import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtInt;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -40,6 +42,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -189,6 +192,12 @@ public final class CommunityStructureCapture {
 			player.sendMessage(Text.literal("Capture cancelled: no tracked player-placed blocks were found in that 5x5 area."), false);
 			return;
 		}
+		Optional<NonVanillaBlock> nonVanillaBlock = firstNonVanillaBlock(selected);
+		if (nonVanillaBlock.isPresent()) {
+			NonVanillaBlock block = nonVanillaBlock.get();
+			player.sendMessage(Text.literal("Capture cancelled: modded block " + block.id() + " was found at " + block.pos().toShortString() + ". Only vanilla Minecraft blocks can be uploaded."), false);
+			return;
+		}
 
 		byte[] nbt;
 		try {
@@ -232,6 +241,16 @@ public final class CommunityStructureCapture {
 		}
 
 		return new CapturedStructure(capture.min(), capture.max(), blocks);
+	}
+
+	private static Optional<NonVanillaBlock> firstNonVanillaBlock(CapturedStructure selected) {
+		for (CapturedBlock block : selected.blocks()) {
+			Identifier id = Registries.BLOCK.getId(block.state().getBlock());
+			if (!"minecraft".equals(id.getNamespace())) {
+				return Optional.of(new NonVanillaBlock(block.pos(), id));
+			}
+		}
+		return Optional.empty();
 	}
 
 	private static byte[] writeStructureNbt(CapturedStructure selected) throws IOException {
@@ -389,6 +408,9 @@ public final class CommunityStructureCapture {
 	}
 
 	private record CapturedBlock(BlockPos pos, BlockState state) {
+	}
+
+	private record NonVanillaBlock(BlockPos pos, Identifier id) {
 	}
 
 	private record CapturedStructure(BlockPos origin, BlockPos max, List<CapturedBlock> blocks) {
