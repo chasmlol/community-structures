@@ -34,6 +34,7 @@ import java.util.concurrent.CompletionStage;
 public final class CommunityStructureChat {
 	private static final double CHAT_RADIUS = 10.0D;
 	private static final long ACTIVE_ROOM_TTL_MILLIS = 5 * 60 * 1000L;
+	private static final long DEATH_ROOM_FALLBACK_TTL_MILLIS = 60 * 1000L;
 	private static final long LIVE_RECONNECT_DELAY_MILLIS = 5000L;
 	private static final long NO_HISTORY_BACKLOG = Long.MAX_VALUE;
 	private static final int POLL_TICKS = 40;
@@ -100,7 +101,53 @@ public final class CommunityStructureChat {
 			active.touch();
 			return Optional.of(new ChatRoute(active, active.visitorId(), active.visitorName()));
 		}
+		if (active.remoteVisitorAllowed() && active.visitorId().equals(senderId)) {
+			active.touch();
+			return Optional.of(new ChatRoute(active, active.creatorId(), active.creatorName()));
+		}
 		return Optional.empty();
+	}
+
+	public static void receiveDeathChatSessions(ServerPlayerEntity player, List<DeathChatSession> sessions) {
+		for (DeathChatSession session : sessions) {
+			activateDeathChatRoom(player, session);
+		}
+	}
+
+	public static void activateDeathHuntRoom(
+		ServerPlayerEntity player,
+		String huntId,
+		String deadPlayerId,
+		String deadPlayerName,
+		String hunterId,
+		String hunterName,
+		long expiresAtMillis
+	) {
+		if (huntId == null || huntId.isBlank()) {
+			return;
+		}
+		DeathChatSession session = new DeathChatSession();
+		session.id = huntId;
+		session.roomId = ActiveRoom.deathRoomId(huntId, deadPlayerId, hunterId);
+		session.structureId = ActiveRoom.deathStructureId(huntId);
+		session.structureName = safeName(deadPlayerName) + "'s lost gear";
+		session.creatorId = deadPlayerId;
+		session.creatorName = safeName(deadPlayerName);
+		session.visitorId = hunterId;
+		session.visitorName = safeName(hunterName);
+		session.expiresAtMillis = expiresAtMillis;
+		activateDeathChatRoom(player, session);
+	}
+
+	private static void activateDeathChatRoom(ServerPlayerEntity player, DeathChatSession session) {
+		if (session == null || !session.includes(player.getUuidAsString())) {
+			return;
+		}
+		ActiveRoom room = ActiveRoom.fromDeathSession(session);
+		if (room == null || room.expired()) {
+			return;
+		}
+		ACTIVE_ROOMS.put(player.getUuid(), room);
 	}
 
 	private static OutgoingChatMessage outgoing(ServerPlayerEntity sender, ChatRoute route, String text) {
@@ -185,7 +232,7 @@ public final class CommunityStructureChat {
 		LiveChatConnection connection = new LiveChatConnection(server, playerId);
 		LIVE_CONNECTIONS.put(playerId, connection);
 		HTTP.newWebSocketBuilder()
-			.buildAsync(liveChatUri(config, playerId.toString(), lastSeenForRequest(playerId)), connection)
+			.buildAsync(liveChatUri(config, playerId.toString(), player.getGameProfile().getName(), lastSeenForRequest(playerId)), connection)
 			.whenComplete((webSocket, throwable) -> {
 				if (throwable != null) {
 					LIVE_CONNECTIONS.remove(playerId, connection);
@@ -276,9 +323,19 @@ public final class CommunityStructureChat {
 		if (envelope.deathReturns != null && !envelope.deathReturns.isEmpty()) {
 			deathReturns.addAll(envelope.deathReturns);
 		}
+		List<DeathChatSession> deathChatSessions = new ArrayList<>();
+		if (envelope.deathChatSession != null) {
+			deathChatSessions.add(envelope.deathChatSession);
+		}
+		if (envelope.deathChatSessions != null && !envelope.deathChatSessions.isEmpty()) {
+			deathChatSessions.addAll(envelope.deathChatSessions);
+		}
 
 		ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
 		if (player != null) {
+			if (!deathChatSessions.isEmpty()) {
+				receiveDeathChatSessions(player, deathChatSessions);
+			}
 			if (!messages.isEmpty()) {
 				receiveMessageList(player, messages);
 			}
@@ -312,9 +369,22 @@ public final class CommunityStructureChat {
 				continue;
 			}
 			sendChatLine(player, message.fromName, message.text);
-			ACTIVE_ROOMS.put(player.getUuid(), ActiveRoom.fromIncoming(message));
+			rememberIncomingRoom(player, message);
 		}
 		updateLastSeen(player.getUuid(), lastSeen);
+	}
+
+	private static void rememberIncomingRoom(ServerPlayerEntity player, IncomingChatMessage message) {
+		if (message.isDeathRoom()) {
+			ActiveRoom existing = ACTIVE_ROOMS.get(player.getUuid());
+			if (existing != null && existing.matches(message.roomId) && !existing.expired()) {
+				existing.touch();
+				return;
+			}
+			ACTIVE_ROOMS.put(player.getUuid(), ActiveRoom.fromIncomingDeath(message));
+			return;
+		}
+		ACTIVE_ROOMS.put(player.getUuid(), ActiveRoom.fromIncoming(message));
 	}
 
 	private static long lastSeenForRequest(UUID playerId) {
@@ -389,6 +459,14 @@ public final class CommunityStructureChat {
 
 	private static boolean shouldDeliver(ServerPlayerEntity player, IncomingChatMessage message) {
 		String playerId = player.getUuidAsString();
+		if (message.isDeathRoom()) {
+			ActiveRoom active = ACTIVE_ROOMS.get(player.getUuid());
+			if (active != null && active.expired()) {
+				ACTIVE_ROOMS.remove(player.getUuid(), active);
+				active = null;
+			}
+			return active != null && active.matches(message.roomId) && active.includes(playerId);
+		}
 		if (playerId.equals(message.creatorId)) {
 			return true;
 		}
@@ -406,14 +484,14 @@ public final class CommunityStructureChat {
 		return URI.create(base + path);
 	}
 
-	private static URI liveChatUri(CommunityStructureConfig config, String playerId, long after) {
+	private static URI liveChatUri(CommunityStructureConfig config, String playerId, String playerName, long after) {
 		String base = config.apiBaseUrl.replaceAll("/+$", "");
 		if (base.startsWith("https://")) {
 			base = "wss://" + base.substring("https://".length());
 		} else if (base.startsWith("http://")) {
 			base = "ws://" + base.substring("http://".length());
 		}
-		return URI.create(base + "/api/chat/live?playerId=" + encode(playerId) + "&after=" + after);
+		return URI.create(base + "/api/chat/live?playerId=" + encode(playerId) + "&playerName=" + encode(playerName) + "&after=" + after);
 	}
 
 	private static String encode(String value) {
@@ -514,9 +592,15 @@ public final class CommunityStructureChat {
 		private final String creatorName;
 		private final String visitorId;
 		private final String visitorName;
+		private final boolean remoteVisitorAllowed;
+		private final long expiresAtMillis;
 		private long lastTouched;
 
 		private ActiveRoom(String roomId, String structureId, String structureName, String creatorId, String creatorName, String visitorId, String visitorName) {
+			this(roomId, structureId, structureName, creatorId, creatorName, visitorId, visitorName, false, 0L);
+		}
+
+		private ActiveRoom(String roomId, String structureId, String structureName, String creatorId, String creatorName, String visitorId, String visitorName, boolean remoteVisitorAllowed, long expiresAtMillis) {
 			this.roomId = roomId;
 			this.structureId = structureId;
 			this.structureName = structureName;
@@ -524,6 +608,8 @@ public final class CommunityStructureChat {
 			this.creatorName = creatorName;
 			this.visitorId = visitorId;
 			this.visitorName = visitorName;
+			this.remoteVisitorAllowed = remoteVisitorAllowed;
+			this.expiresAtMillis = expiresAtMillis;
 			touch();
 		}
 
@@ -535,8 +621,44 @@ public final class CommunityStructureChat {
 			return new ActiveRoom(message.roomId, message.structureId, message.structureName, message.creatorId, message.creatorName, message.visitorId, message.visitorName);
 		}
 
+		private static ActiveRoom fromIncomingDeath(IncomingChatMessage message) {
+			return new ActiveRoom(
+				message.roomId,
+				message.structureId,
+				message.structureName,
+				message.creatorId,
+				message.creatorName,
+				message.visitorId,
+				message.visitorName,
+				true,
+				System.currentTimeMillis() + DEATH_ROOM_FALLBACK_TTL_MILLIS
+			);
+		}
+
+		private static ActiveRoom fromDeathSession(DeathChatSession session) {
+			String roomId = session.roomId == null || session.roomId.isBlank()
+				? deathRoomId(session.id, session.creatorId, session.visitorId)
+				: session.roomId;
+			String structureId = session.structureId == null || session.structureId.isBlank()
+				? deathStructureId(session.id)
+				: session.structureId;
+			long expiresAt = session.expiryMillis();
+			if (roomId.isBlank() || structureId.isBlank() || session.creatorId == null || session.creatorId.isBlank() || session.visitorId == null || session.visitorId.isBlank()) {
+				return null;
+			}
+			return new ActiveRoom(roomId, structureId, session.structureName, session.creatorId, session.creatorName, session.visitorId, session.visitorName, true, expiresAt);
+		}
+
 		private static String roomId(String structureId, String creatorId, String visitorId) {
 			return "structure:" + structureId + ":" + creatorId + ":" + visitorId;
+		}
+
+		private static String deathStructureId(String huntId) {
+			return "death_hunt:" + safeName(huntId);
+		}
+
+		private static String deathRoomId(String huntId, String deadPlayerId, String hunterId) {
+			return deathStructureId(huntId) + ":" + safeName(deadPlayerId) + ":" + safeName(hunterId);
 		}
 
 		private void touch() {
@@ -544,7 +666,22 @@ public final class CommunityStructureChat {
 		}
 
 		private boolean expired() {
+			if (expiresAtMillis > 0L) {
+				return System.currentTimeMillis() > expiresAtMillis;
+			}
 			return System.currentTimeMillis() - lastTouched > ACTIVE_ROOM_TTL_MILLIS;
+		}
+
+		private boolean matches(String otherRoomId) {
+			return roomId != null && roomId.equals(otherRoomId);
+		}
+
+		private boolean includes(String playerId) {
+			return playerId != null && (playerId.equals(creatorId) || playerId.equals(visitorId));
+		}
+
+		private boolean remoteVisitorAllowed() {
+			return remoteVisitorAllowed;
 		}
 
 		private String roomId() {
@@ -599,6 +736,8 @@ public final class CommunityStructureChat {
 	private static final class LiveChatEnvelope {
 		private IncomingChatMessage message;
 		private List<IncomingChatMessage> messages;
+		private DeathChatSession deathChatSession;
+		private List<DeathChatSession> deathChatSessions;
 		private CommunityStructureBlessing.IncomingBlessing blessing;
 		private List<CommunityStructureBlessing.IncomingBlessing> blessings;
 		private CommunityStructureDeathHunt.IncomingDeathHunt deathHunt;
@@ -630,6 +769,41 @@ public final class CommunityStructureChat {
 				&& fromId.equals(toId)
 				&& creatorId != null
 				&& creatorId.equals(visitorId);
+		}
+
+		private boolean isDeathRoom() {
+			return (roomId != null && roomId.startsWith("death_hunt:"))
+				|| (structureId != null && structureId.startsWith("death_hunt:"));
+		}
+	}
+
+	public static final class DeathChatSession {
+		private String id;
+		private String roomId;
+		private String structureId;
+		private String structureName;
+		private String creatorId;
+		private String creatorName;
+		private String visitorId;
+		private String visitorName;
+		private String expiresAt;
+		private long expiresAtMillis;
+
+		private boolean includes(String playerId) {
+			return playerId != null && (playerId.equals(creatorId) || playerId.equals(visitorId));
+		}
+
+		private long expiryMillis() {
+			if (expiresAtMillis > 0L) {
+				return expiresAtMillis;
+			}
+			if (expiresAt != null && !expiresAt.isBlank()) {
+				try {
+					return java.time.Instant.parse(expiresAt).toEpochMilli();
+				} catch (RuntimeException ignored) {
+				}
+			}
+			return System.currentTimeMillis() + DEATH_ROOM_FALLBACK_TTL_MILLIS;
 		}
 	}
 }

@@ -110,6 +110,9 @@ public final class CommunityStructureDeathHunt {
 			MinecraftServer server = entity.getServer();
 			if (server != null) {
 				ServerPlayerEntity hunter = playerById(server, activeHunt.assignedPlayerId());
+				if (hunter != null) {
+					CommunityStructureChat.activateDeathHuntRoom(hunter, activeHunt.id(), activeHunt.deadPlayerId(), activeHunt.deadPlayerName(), activeHunt.assignedPlayerId(), activeHunt.assignedPlayerName(), System.currentTimeMillis() + 60_000L);
+				}
 				completeHunt(server, activeHunt.id(), activeHunt.assignedPlayerId(), activeHunt.assignedPlayerName(), hunter);
 			}
 			return;
@@ -230,7 +233,9 @@ public final class CommunityStructureDeathHunt {
 		if (world.spawnEntity(zombie)) {
 			long expiresAt = parseExpiry(hunt.expiresAt);
 			String assignedPlayerId = hunt.assignedToId == null || hunt.assignedToId.isBlank() ? player.getUuidAsString() : hunt.assignedToId;
-			ACTIVE_HUNTS.put(hunt.id, new ActiveHunt(hunt.id, zombie.getUuid(), world.getRegistryKey(), expiresAt, assignedPlayerId, player.getGameProfile().getName()));
+			String assignedPlayerName = hunt.assignedToName == null || hunt.assignedToName.isBlank() ? player.getGameProfile().getName() : hunt.assignedToName;
+			ACTIVE_HUNTS.put(hunt.id, new ActiveHunt(hunt.id, zombie.getUuid(), world.getRegistryKey(), expiresAt, assignedPlayerId, assignedPlayerName, hunt.deadPlayerId, hunt.deadPlayerName));
+			CommunityStructureChat.activateDeathHuntRoom(player, hunt.id, hunt.deadPlayerId, hunt.deadPlayerName, assignedPlayerId, assignedPlayerName, expiresAt);
 			player.sendMessage(Text.literal("A recovery zombie for " + safeName(hunt.deadPlayerName) + " has appeared. Kill it before the timer ends to return their gear."), false);
 		}
 	}
@@ -336,6 +341,7 @@ public final class CommunityStructureDeathHunt {
 		}
 		ACTIVE_HUNTS.remove(hunt.id());
 		dropRecoveryReward(killedEntity);
+		CommunityStructureChat.activateDeathHuntRoom(player, hunt.id(), hunt.deadPlayerId(), hunt.deadPlayerName(), hunt.assignedPlayerId(), hunt.assignedPlayerName(), System.currentTimeMillis() + 60_000L);
 		completeHunt(player.getServer(), hunt.id(), hunt.assignedPlayerId(), hunt.assignedPlayerName(), player);
 	}
 
@@ -435,6 +441,7 @@ public final class CommunityStructureDeathHunt {
 
 		removeDeathDrops(player, deathReturn, restored);
 		restoreInventory(player, restored, deathReturn.selectedSlot);
+		CommunityStructureChat.activateDeathHuntRoom(player, deathReturn.id, deathReturn.deadPlayerId, deathReturn.deadPlayerName, deathReturn.hunterId, deathReturn.hunterName, System.currentTimeMillis() + 60_000L);
 		player.totalExperience = Math.max(0, deathReturn.totalExperience);
 		player.experienceLevel = Math.max(0, deathReturn.experienceLevel);
 		player.experienceProgress = Math.max(0.0F, Math.min(1.0F, deathReturn.experienceProgress));
@@ -625,7 +632,7 @@ public final class CommunityStructureDeathHunt {
 	private record CompleteDeathHunt(String hunterId, String hunterName) {
 	}
 
-	private record ActiveHunt(String id, UUID zombieId, RegistryKey<World> worldKey, long expiresAtMillis, String assignedPlayerId, String assignedPlayerName) {
+	private record ActiveHunt(String id, UUID zombieId, RegistryKey<World> worldKey, long expiresAtMillis, String assignedPlayerId, String assignedPlayerName, String deadPlayerId, String deadPlayerName) {
 	}
 
 	private record RestoredItem(int slot, ItemStack stack) {
@@ -640,6 +647,7 @@ public final class CommunityStructureDeathHunt {
 		private String deadPlayerId;
 		private String deadPlayerName;
 		private String assignedToId;
+		private String assignedToName;
 		private int deathX;
 		private int deathY;
 		private int deathZ;
