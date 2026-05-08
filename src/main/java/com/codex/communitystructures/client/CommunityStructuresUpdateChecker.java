@@ -37,10 +37,12 @@ public final class CommunityStructuresUpdateChecker {
 		.connectTimeout(Duration.ofSeconds(6))
 		.followRedirects(HttpClient.Redirect.NORMAL)
 		.build();
-	private static final AtomicBoolean CHECK_STARTED = new AtomicBoolean();
+	private static final long AUTOMATIC_CHECK_INTERVAL_MILLIS = Duration.ofMinutes(5).toMillis();
+	private static final AtomicBoolean CHECK_IN_FLIGHT = new AtomicBoolean();
 	private static final AtomicBoolean INSTALL_STARTED = new AtomicBoolean();
 	private static volatile ReleaseInfo availableRelease;
 	private static volatile String notifiedVersion = "";
+	private static volatile long nextAutomaticCheckAtMillis = 0L;
 
 	private CommunityStructuresUpdateChecker() {
 	}
@@ -59,10 +61,15 @@ public final class CommunityStructuresUpdateChecker {
 					return 1;
 				}));
 		});
+		nextAutomaticCheckAtMillis = System.currentTimeMillis() + AUTOMATIC_CHECK_INTERVAL_MILLIS;
 		checkForUpdates(false);
 	}
 
 	public static void tick(MinecraftClient client) {
+		if (client.player != null && System.currentTimeMillis() >= nextAutomaticCheckAtMillis) {
+			nextAutomaticCheckAtMillis = System.currentTimeMillis() + AUTOMATIC_CHECK_INTERVAL_MILLIS;
+			checkForUpdates(false);
+		}
 		ReleaseInfo release = availableRelease;
 		if (release != null && client.player != null && !release.version().equals(notifiedVersion)) {
 			sendUpdateMessageAndRemember(client, release);
@@ -74,7 +81,7 @@ public final class CommunityStructuresUpdateChecker {
 	}
 
 	private static void checkForUpdates(boolean forceMessage) {
-		if (!forceMessage && !CHECK_STARTED.compareAndSet(false, true)) {
+		if (!CHECK_IN_FLIGHT.compareAndSet(false, true)) {
 			return;
 		}
 		CompletableFuture.runAsync(() -> {
@@ -96,9 +103,7 @@ public final class CommunityStructuresUpdateChecker {
 					client.execute(() -> sendClientMessage(client, Text.literal("Could not check Community Structures updates.").formatted(Formatting.RED)));
 				}
 			} finally {
-				if (forceMessage) {
-					CHECK_STARTED.set(false);
-				}
+				CHECK_IN_FLIGHT.set(false);
 			}
 		});
 	}
