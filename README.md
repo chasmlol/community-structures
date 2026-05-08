@@ -35,7 +35,7 @@ Important defaults:
 - `landChancePerChunk`, `waterChancePerChunk`, `caveChancePerChunk`: candidate frequency sliders
 - `landSpacingChunks`, `waterSpacingChunks`, `caveSpacingChunks`: vanilla-style spread grid spacing
 - `maxWorldgenStartsPerSecond`: hard burst cap for structure starts while flying quickly
-- `cachePerCategory`: `10`
+- `cachePerCategory`: `10` never-generated structures to keep ready locally
 - `downloadIntervalSeconds`: `15`
 
 Structure chat uses a WebSocket connection to `/api/chat/live` for instant delivery, with the older HTTP polling endpoint kept as a fallback.
@@ -43,3 +43,5 @@ Structure chat uses a WebSocket connection to `/api/chat/live` for instant deliv
 Use `/bless` while standing within 10 blocks of a generated community structure to open a small chest UI. Items placed in that chest are sent through the API to the structure creator and delivered when they are online.
 
 Structure cache requests include the local player's UUID and name in request headers so the API can apply per-account download limits, with IP limits as a fallback for unknown clients.
+
+Downloaded structures stay in the local cache instead of being consumed. The mod prefers structures it has never generated before; when the API has no new structures outside the local cache, it reuses a random eligible cached structure as a fallback.

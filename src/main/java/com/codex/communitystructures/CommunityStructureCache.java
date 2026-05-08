@@ -19,6 +19,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,9 +39,12 @@ public final class CommunityStructureCache {
 
 	private final CommunityStructureConfig config;
 	private final Path cacheRoot;
+	private final Path cacheStatePath;
 	private final HttpClient client;
 	private final Map<StructureCategory, CopyOnWriteArrayList<CachedStructure>> cached = new ConcurrentHashMap<>();
+	private final Map<StructureCategory, Set<String>> generatedIds = new ConcurrentHashMap<>();
 	private final Set<String> reserved = ConcurrentHashMap.newKeySet();
+	private final Set<StructureCategory> remoteExhausted = ConcurrentHashMap.newKeySet();
 	private final Map<StructureCategory, String> lastUsed = new ConcurrentHashMap<>();
 	private final AtomicBoolean prefetchQueued = new AtomicBoolean();
 	private volatile RequestIdentity requestIdentity = RequestIdentity.EMPTY;
@@ -49,6 +53,7 @@ public final class CommunityStructureCache {
 	public CommunityStructureCache(CommunityStructureConfig config) {
 		this.config = config;
 		this.cacheRoot = FabricLoader.getInstance().getConfigDir().resolve("community_structures").resolve("cache");
+		this.cacheStatePath = cacheRoot.resolve("cache-state.json");
 		this.client = HttpClient.newBuilder()
 			.version(HttpClient.Version.HTTP_1_1)
 			.connectTimeout(Duration.ofSeconds(4))
@@ -57,13 +62,16 @@ public final class CommunityStructureCache {
 
 		for (StructureCategory category : StructureCategory.values()) {
 			cached.put(category, new CopyOnWriteArrayList<>());
+			generatedIds.put(category, ConcurrentHashMap.newKeySet());
 		}
 	}
 
 	public void start() {
 		try {
 			Files.createDirectories(cacheRoot);
+			loadCacheState();
 			loadExisting();
+			forgetMissingGeneratedIds();
 		} catch (IOException exception) {
 			CommunityStructures.LOGGER.warn("Could not prepare structure cache", exception);
 		}
@@ -105,18 +113,30 @@ public final class CommunityStructureCache {
 	}
 
 	public Optional<CachedStructure> choose(StructureCategory category, PlacementPreset preset, net.minecraft.util.math.random.Random random, String biomeId) {
+		Optional<CachedStructure> unused = chooseLocal(category, preset, random, biomeId, false);
+		if (unused.isPresent()) {
+			return unused;
+		}
+
+		prefetchSoon();
+		if (!remoteExhausted.contains(category)) {
+			return Optional.empty();
+		}
+		return chooseLocal(category, preset, random, biomeId, true);
+	}
+
+	private Optional<CachedStructure> chooseLocal(StructureCategory category, PlacementPreset preset, net.minecraft.util.math.random.Random random, String biomeId, boolean allowAlreadyGenerated) {
 		List<CachedStructure> choices = cached.getOrDefault(category, new CopyOnWriteArrayList<>());
 		if (choices.isEmpty()) {
-			prefetchSoon();
 			return Optional.empty();
 		}
 		List<CachedStructure> eligible = choices.stream()
 			.filter(choice -> choice.canSpawnIn(biomeId))
 			.filter(choice -> preset == null || choice.placementPreset() == preset)
+			.filter(choice -> allowAlreadyGenerated || !hasGenerated(category, choice.id()))
 			.filter(choice -> !reserved.contains(choice.id()))
 			.toList();
 		if (eligible.isEmpty()) {
-			prefetchSoon();
 			return Optional.empty();
 		}
 
@@ -124,11 +144,11 @@ public final class CommunityStructureCache {
 		for (int offset = 0; offset < eligible.size(); offset++) {
 			CachedStructure choice = eligible.get((start + offset) % eligible.size());
 			if (choice.canSpawnIn(biomeId) && reserved.add(choice.id())) {
+				if (allowAlreadyGenerated && hasGenerated(category, choice.id())) {
+					CommunityStructures.LOGGER.debug("Reusing cached {} community structure {} because no new local structure is ready", category.apiName(), choice.name());
+				}
 				return Optional.of(choice);
 			}
-		}
-		if (config.refillCacheAfterUse) {
-			prefetchSoon();
 		}
 		return Optional.empty();
 	}
@@ -144,21 +164,8 @@ public final class CommunityStructureCache {
 			Path generatedDir = cacheRoot.resolve("generated").resolve(structure.category().apiName());
 			Files.createDirectories(generatedDir);
 			Path output = generatedDir.resolve(structure.id() + "-" + UUID.randomUUID() + ".nbt");
-			try {
-				Files.move(structure.path(), output, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-			} catch (IOException atomicMoveException) {
-				Files.move(structure.path(), output, StandardCopyOption.REPLACE_EXISTING);
-			}
-
-			CopyOnWriteArrayList<CachedStructure> list = cached.get(structure.category());
-			if (list != null) {
-				list.removeIf(existing -> existing.id().equals(structure.id()));
-			}
-			reserved.remove(structure.id());
-			lastUsed.put(structure.category(), structure.id());
-			Files.deleteIfExists(metadataPath(structure.path()));
-			CommunityStructurePlacer.forgetPrepared(structure.path());
-			prefetchSoon();
+			Files.copy(structure.path(), output, StandardCopyOption.REPLACE_EXISTING);
+			recordGenerated(structure);
 
 			return Optional.of(new CachedStructure(structure.category(), structure.id(), structure.name(), output, structure.allowedBiomes(), structure.placementPreset(), structure.creatorName(), structure.creatorId()));
 		} catch (IOException exception) {
@@ -170,20 +177,7 @@ public final class CommunityStructureCache {
 	}
 
 	public void markUsed(CachedStructure structure) {
-		CopyOnWriteArrayList<CachedStructure> list = cached.get(structure.category());
-		if (list != null) {
-			list.removeIf(existing -> existing.id().equals(structure.id()));
-		}
-		reserved.remove(structure.id());
-		lastUsed.put(structure.category(), structure.id());
-		try {
-			Files.deleteIfExists(structure.path());
-			Files.deleteIfExists(metadataPath(structure.path()));
-			CommunityStructurePlacer.forgetPrepared(structure.path());
-		} catch (IOException exception) {
-			CommunityStructures.LOGGER.debug("Could not remove used cached structure {}", structure.path(), exception);
-		}
-		prefetchSoon();
+		recordGenerated(structure);
 	}
 
 	public void release(CachedStructure structure) {
@@ -202,6 +196,35 @@ public final class CommunityStructureCache {
 		}
 	}
 
+	private void recordGenerated(CachedStructure structure) {
+		reserved.remove(structure.id());
+		lastUsed.put(structure.category(), structure.id());
+		Set<String> ids = generatedIds.get(structure.category());
+		if (ids != null && ids.add(structure.id())) {
+			saveCacheState();
+		}
+		prefetchSoon();
+	}
+
+	private boolean hasGenerated(StructureCategory category, String id) {
+		Set<String> ids = generatedIds.get(category);
+		return ids != null && ids.contains(id);
+	}
+
+	private int unusedCount(StructureCategory category) {
+		return (int) cached.getOrDefault(category, new CopyOnWriteArrayList<>()).stream()
+			.filter(structure -> !hasGenerated(category, structure.id()))
+			.count();
+	}
+
+	private Set<String> cachedIds(StructureCategory category) {
+		Set<String> ids = new HashSet<>();
+		for (CachedStructure structure : cached.getOrDefault(category, new CopyOnWriteArrayList<>())) {
+			ids.add(structure.id());
+		}
+		return ids;
+	}
+
 	private void prefetchAll() {
 		if (!config.enabled) {
 			return;
@@ -212,10 +235,9 @@ public final class CommunityStructureCache {
 				continue;
 			}
 			try {
-				refreshCategory(category);
 				fillCategory(category);
-				prune(category);
 			} catch (Exception exception) {
+				remoteExhausted.add(category);
 				CommunityStructures.LOGGER.debug("Could not prefetch {} structure", category.apiName(), exception);
 			}
 		}
@@ -226,8 +248,10 @@ public final class CommunityStructureCache {
 			return;
 		}
 		int attempts = Math.max(config.cachePerCategory * 4, 4);
-		for (int attempt = 0; attempt < attempts && cached.get(category).size() < config.cachePerCategory; attempt++) {
-			downloadRandom(category);
+		for (int attempt = 0; attempt < attempts && unusedCount(category) < config.cachePerCategory; attempt++) {
+			if (downloadRandom(category, null, "").isEmpty()) {
+				return;
+			}
 		}
 	}
 
@@ -258,6 +282,61 @@ public final class CommunityStructureCache {
 					existing.forEach(structure -> CommunityStructurePlacer.prepareAsync(structure, config.maxDownloadBytes));
 				}
 			}
+		}
+	}
+
+	private void loadCacheState() throws IOException {
+		if (!Files.exists(cacheStatePath)) {
+			return;
+		}
+		try (var reader = Files.newBufferedReader(cacheStatePath)) {
+			CacheState state = GSON.fromJson(reader, CacheState.class);
+			if (state == null || state.generatedIds == null) {
+				return;
+			}
+			for (StructureCategory category : StructureCategory.values()) {
+				Set<String> ids = generatedIds.get(category);
+				ids.clear();
+				Set<String> savedIds = state.generatedIds.get(category.apiName());
+				if (savedIds != null) {
+					ids.addAll(savedIds);
+				}
+			}
+		}
+	}
+
+	private synchronized void saveCacheState() {
+		try {
+			Files.createDirectories(cacheStatePath.getParent());
+			CacheState state = new CacheState();
+			for (StructureCategory category : StructureCategory.values()) {
+				state.generatedIds.put(category.apiName(), Set.copyOf(generatedIds.getOrDefault(category, Set.of())));
+			}
+			Path temp = cacheStatePath.resolveSibling(cacheStatePath.getFileName() + ".tmp");
+			try (var writer = Files.newBufferedWriter(temp)) {
+				GSON.toJson(state, writer);
+			}
+			try {
+				Files.move(temp, cacheStatePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (IOException atomicMoveException) {
+				Files.move(temp, cacheStatePath, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException exception) {
+			CommunityStructures.LOGGER.debug("Could not save community structure cache state {}", cacheStatePath, exception);
+		}
+	}
+
+	private void forgetMissingGeneratedIds() {
+		boolean changed = false;
+		for (StructureCategory category : StructureCategory.values()) {
+			Set<String> cachedIds = cachedIds(category);
+			Set<String> ids = generatedIds.get(category);
+			if (ids != null && ids.removeIf(id -> !cachedIds.contains(id))) {
+				changed = true;
+			}
+		}
+		if (changed) {
+			saveCacheState();
 		}
 	}
 
@@ -304,17 +383,26 @@ public final class CommunityStructureCache {
 		return GSON.fromJson(response.body(), RemoteStructure.class);
 	}
 
-	private void downloadRandom(StructureCategory category) throws IOException, InterruptedException {
-		URI randomUri = apiUri("/api/structures/random?category=" + category.apiName() + excludeQuery(category));
+	private Optional<CachedStructure> downloadRandom(StructureCategory category, PlacementPreset preset, String biomeId) throws IOException, InterruptedException {
+		RandomStructureRequest body = new RandomStructureRequest(
+			category.apiName(),
+			preset == null ? "" : preset.apiName(),
+			biomeId == null ? "" : biomeId,
+			List.copyOf(cachedIds(category)),
+			false
+		);
+		URI randomUri = apiUri("/api/structures/random");
 		HttpRequest randomRequest = requestBuilder(randomUri)
 			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
-			.GET()
+			.header("content-type", "application/json; charset=utf-8")
+			.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8))
 			.build();
 		HttpResponse<String> randomResponse = client.send(randomRequest, HttpResponse.BodyHandlers.ofString());
 		if (randomResponse.statusCode() == 404) {
-			return;
+			remoteExhausted.add(category);
+			return Optional.empty();
 		}
 		if (randomResponse.statusCode() / 100 != 2) {
 			throw new IOException("Random endpoint returned HTTP " + randomResponse.statusCode());
@@ -326,9 +414,11 @@ public final class CommunityStructureCache {
 		}
 
 		Path output = categoryDir(category).resolve(remote.id() + ".nbt");
+		CachedStructure remembered = new CachedStructure(category, remote.id(), fallbackName(remote), output, allowedBiomes(remote), placementPreset(remote, category), creatorName(remote), creatorId(remote));
 		if (Files.exists(output)) {
-			remember(category, new CachedStructure(category, remote.id(), fallbackName(remote), output, allowedBiomes(remote), placementPreset(remote, category), creatorName(remote), creatorId(remote)));
-			return;
+			remember(category, remembered);
+			remoteExhausted.remove(category);
+			return Optional.of(remembered);
 		}
 
 		URI downloadUri = apiUri(remote.downloadUrl());
@@ -352,8 +442,10 @@ public final class CommunityStructureCache {
 		}
 		Files.move(temp, output, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 		writeMetadata(output, remote);
-		remember(category, new CachedStructure(category, remote.id(), fallbackName(remote), output, allowedBiomes(remote), placementPreset(remote, category), creatorName(remote), creatorId(remote)));
+		remember(category, remembered);
+		remoteExhausted.remove(category);
 		CommunityStructures.LOGGER.info("Cached {} community structure {}", category.apiName(), fallbackName(remote));
+		return Optional.of(remembered);
 	}
 
 	private void remember(StructureCategory category, CachedStructure structure) {
@@ -544,7 +636,14 @@ public final class CommunityStructureCache {
 	private record CacheMetadata(Set<String> allowedBiomes, String placementPreset, String creatorName, String creatorId) {
 	}
 
+	private record RandomStructureRequest(String category, String placementPreset, String biome, List<String> exclude, boolean allowFallback) {
+	}
+
 	private record RequestIdentity(String playerId, String playerName) {
 		private static final RequestIdentity EMPTY = new RequestIdentity("", "");
+	}
+
+	private static final class CacheState {
+		private Map<String, Set<String>> generatedIds = new HashMap<>();
 	}
 }

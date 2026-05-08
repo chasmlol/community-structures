@@ -109,10 +109,10 @@ public final class CommunityStructuresModMenu implements ModMenuApi {
 			.setTooltip(Text.literal("The website/server the mod downloads structures from."))
 			.setSaveConsumer(value -> config.apiBaseUrl = value)
 			.build());
-		cache.addEntry(entries.startIntSlider(Text.literal("Cache per category"), config.cachePerCategory, 1, 50)
+		cache.addEntry(entries.startIntSlider(Text.literal("New cache target"), config.cachePerCategory, 1, 50)
 			.setDefaultValue(DEFAULTS.cachePerCategory)
 			.setTextGetter(value -> Text.literal(value + " structures"))
-			.setTooltip(Text.literal("How many land structures to keep ready locally."))
+			.setTooltip(Text.literal("How many never-generated land structures to keep ready locally. Already generated structures stay cached for fallback reuse."))
 			.setSaveConsumer(value -> config.cachePerCategory = value)
 			.build());
 		cache.addEntry(entries.startIntSlider(Text.literal("Download interval"), config.downloadIntervalSeconds, 15, 600)
