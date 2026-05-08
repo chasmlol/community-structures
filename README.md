@@ -35,7 +35,7 @@ Important defaults:
 - `landChancePerChunk`, `waterChancePerChunk`, `caveChancePerChunk`: candidate frequency sliders
 - `landSpacingChunks`, `waterSpacingChunks`, `caveSpacingChunks`: vanilla-style spread grid spacing
 - `maxWorldgenStartsPerSecond`: hard burst cap for structure starts while flying quickly
-- `cachePerCategory`: `10` never-generated structures to keep ready locally
+- `cachePerCategory`: `5` newest never-generated structures to keep ready locally
 - `downloadIntervalSeconds`: `15`
 
 Structure chat uses a WebSocket connection to `/api/chat/live` for instant delivery, with the older HTTP polling endpoint kept as a fallback.
@@ -44,6 +44,6 @@ Use `/bless` while standing within 10 blocks of a generated community structure 
 
 Structure cache requests include the local player's UUID and name in request headers so the API can apply per-account download limits, with IP limits as a fallback for unknown clients.
 
-Downloaded structures stay in the local cache instead of being consumed. The mod prefers structures it has never generated before; when the API has no new structures outside the local cache, it reuses a random eligible cached structure as a fallback.
+Downloaded structures stay on disk after generation as the local used cache. The active ready queue is filled from the newest online structures the player has not generated yet; only when the online database has zero unseen structures does the mod reuse a random eligible structure from the local used cache.
 
 When a player dies without keep-inventory enabled, the mod can send a death recovery event through the API. Another live modded player gets a named zombie wearing the dead player's head; killing it before the timer expires returns the dead player's saved inventory, offhand, armor, selected hotbar slot, and XP.

@@ -237,7 +237,7 @@ public final class CommunityStructureCache {
 			try {
 				fillCategory(category);
 			} catch (Exception exception) {
-				remoteExhausted.add(category);
+				remoteExhausted.remove(category);
 				CommunityStructures.LOGGER.debug("Could not prefetch {} structure", category.apiName(), exception);
 			}
 		}
@@ -247,11 +247,43 @@ public final class CommunityStructureCache {
 		if (!isCategoryEnabled(category)) {
 			return;
 		}
-		int attempts = Math.max(config.cachePerCategory * 4, 4);
-		for (int attempt = 0; attempt < attempts && unusedCount(category) < config.cachePerCategory; attempt++) {
-			if (downloadRandom(category, null, "").isEmpty()) {
-				return;
+
+		List<RemoteStructure> latest = fetchLatestStructures(category);
+		List<RemoteStructure> unseen = latest.stream()
+			.filter(remote -> remote != null && remote.id() != null && !remote.id().isBlank())
+			.filter(remote -> !hasGenerated(category, remote.id()))
+			.toList();
+		if (unseen.isEmpty()) {
+			remoteExhausted.add(category);
+			return;
+		}
+
+		remoteExhausted.remove(category);
+		Set<String> targetIds = new HashSet<>();
+		for (RemoteStructure remote : unseen) {
+			if (targetIds.size() >= config.cachePerCategory) {
+				break;
 			}
+			targetIds.add(remote.id());
+		}
+
+		for (CachedStructure structure : List.copyOf(cached.getOrDefault(category, new CopyOnWriteArrayList<>()))) {
+			if (!hasGenerated(category, structure.id()) && !targetIds.contains(structure.id())) {
+				removeCached(structure);
+			}
+		}
+
+		Set<String> localIds = cachedIds(category);
+		for (RemoteStructure remote : unseen) {
+			if (!targetIds.contains(remote.id())) {
+				continue;
+			}
+			if (localIds.contains(remote.id())) {
+				refreshCachedMetadata(category, remote);
+				continue;
+			}
+			downloadRemote(category, remote);
+			localIds.add(remote.id());
 		}
 	}
 
@@ -383,34 +415,28 @@ public final class CommunityStructureCache {
 		return GSON.fromJson(response.body(), RemoteStructure.class);
 	}
 
-	private Optional<CachedStructure> downloadRandom(StructureCategory category, PlacementPreset preset, String biomeId) throws IOException, InterruptedException {
-		RandomStructureRequest body = new RandomStructureRequest(
-			category.apiName(),
-			preset == null ? "" : preset.apiName(),
-			biomeId == null ? "" : biomeId,
-			List.copyOf(cachedIds(category)),
-			false
-		);
-		URI randomUri = apiUri("/api/structures/random");
-		HttpRequest randomRequest = requestBuilder(randomUri)
+	private List<RemoteStructure> fetchLatestStructures(StructureCategory category) throws IOException, InterruptedException {
+		URI uri = apiUri("/api/structures?category=" + URLEncoder.encode(category.apiName(), StandardCharsets.UTF_8));
+		HttpRequest request = requestBuilder(uri)
 			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
-			.header("content-type", "application/json; charset=utf-8")
-			.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8))
+			.GET()
 			.build();
-		HttpResponse<String> randomResponse = client.send(randomRequest, HttpResponse.BodyHandlers.ofString());
-		if (randomResponse.statusCode() == 404) {
-			remoteExhausted.add(category);
-			return Optional.empty();
+		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+		if (response.statusCode() / 100 != 2) {
+			throw new IOException("Structure list endpoint returned HTTP " + response.statusCode());
 		}
-		if (randomResponse.statusCode() / 100 != 2) {
-			throw new IOException("Random endpoint returned HTTP " + randomResponse.statusCode());
+		StructureListResponse body = GSON.fromJson(response.body(), StructureListResponse.class);
+		if (body == null || body.structures() == null) {
+			return List.of();
 		}
+		return body.structures();
+	}
 
-		RemoteStructure remote = GSON.fromJson(randomResponse.body(), RemoteStructure.class);
+	private Optional<CachedStructure> downloadRemote(StructureCategory category, RemoteStructure remote) throws IOException, InterruptedException {
 		if (remote == null || remote.id() == null || remote.downloadUrl() == null) {
-			throw new IOException("Random endpoint returned an invalid structure record");
+			throw new IOException("Structure list returned an invalid structure record");
 		}
 
 		Path output = categoryDir(category).resolve(remote.id() + ".nbt");
@@ -446,6 +472,21 @@ public final class CommunityStructureCache {
 		remoteExhausted.remove(category);
 		CommunityStructures.LOGGER.info("Cached {} community structure {}", category.apiName(), fallbackName(remote));
 		return Optional.of(remembered);
+	}
+
+	private void refreshCachedMetadata(StructureCategory category, RemoteStructure remote) throws IOException {
+		CachedStructure remembered = new CachedStructure(
+			category,
+			remote.id(),
+			fallbackName(remote),
+			categoryDir(category).resolve(remote.id() + ".nbt"),
+			allowedBiomes(remote),
+			placementPreset(remote, category),
+			creatorName(remote),
+			creatorId(remote)
+		);
+		writeMetadata(remembered.path(), remote);
+		replaceRemembered(category, remembered);
 	}
 
 	private void remember(StructureCategory category, CachedStructure structure) {
@@ -636,7 +677,7 @@ public final class CommunityStructureCache {
 	private record CacheMetadata(Set<String> allowedBiomes, String placementPreset, String creatorName, String creatorId) {
 	}
 
-	private record RandomStructureRequest(String category, String placementPreset, String biome, List<String> exclude, boolean allowFallback) {
+	private record StructureListResponse(List<RemoteStructure> structures) {
 	}
 
 	private record RequestIdentity(String playerId, String playerName) {

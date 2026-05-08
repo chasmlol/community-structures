@@ -30,7 +30,7 @@ public final class CommunityStructureConfig {
 	public int waterSeparationChunks = 5;
 	public int caveSeparationChunks = 4;
 	public int spawnProtectionRadiusChunks = 0;
-	public int cachePerCategory = 10;
+	public int cachePerCategory = 5;
 	public int downloadIntervalSeconds = 15;
 	public int maxDownloadBytes = 128 * 1024 * 1024;
 	public int minCaveY = -32;
