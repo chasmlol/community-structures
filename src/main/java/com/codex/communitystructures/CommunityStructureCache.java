@@ -42,6 +42,7 @@ public final class CommunityStructureCache {
 	private final Path cacheStatePath;
 	private final HttpClient client;
 	private final Map<StructureCategory, CopyOnWriteArrayList<CachedStructure>> cached = new ConcurrentHashMap<>();
+	private final Map<StructureCategory, CopyOnWriteArrayList<String>> readyQueues = new ConcurrentHashMap<>();
 	private final Map<StructureCategory, Set<String>> generatedIds = new ConcurrentHashMap<>();
 	private final Set<String> reserved = ConcurrentHashMap.newKeySet();
 	private final Set<StructureCategory> remoteExhausted = ConcurrentHashMap.newKeySet();
@@ -62,6 +63,7 @@ public final class CommunityStructureCache {
 
 		for (StructureCategory category : StructureCategory.values()) {
 			cached.put(category, new CopyOnWriteArrayList<>());
+			readyQueues.put(category, new CopyOnWriteArrayList<>());
 			generatedIds.put(category, ConcurrentHashMap.newKeySet());
 		}
 	}
@@ -130,10 +132,28 @@ public final class CommunityStructureCache {
 		if (choices.isEmpty()) {
 			return Optional.empty();
 		}
+		if (!allowAlreadyGenerated) {
+			pruneReadyQueue(category);
+			for (String queuedId : List.copyOf(readyQueues.getOrDefault(category, new CopyOnWriteArrayList<>()))) {
+				CachedStructure choice = findCached(category, queuedId);
+				if (choice == null || hasGenerated(category, choice.id())) {
+					readyQueues.getOrDefault(category, new CopyOnWriteArrayList<>()).remove(queuedId);
+					continue;
+				}
+				if (!choice.canSpawnIn(biomeId) || (preset != null && choice.placementPreset() != preset)) {
+					continue;
+				}
+				if (reserved.add(choice.id())) {
+					return Optional.of(choice);
+				}
+			}
+			return Optional.empty();
+		}
+
 		List<CachedStructure> eligible = choices.stream()
 			.filter(choice -> choice.canSpawnIn(biomeId))
 			.filter(choice -> preset == null || choice.placementPreset() == preset)
-			.filter(choice -> allowAlreadyGenerated || !hasGenerated(category, choice.id()))
+			.filter(choice -> hasGenerated(category, choice.id()))
 			.filter(choice -> !reserved.contains(choice.id()))
 			.toList();
 		if (eligible.isEmpty()) {
@@ -199,6 +219,7 @@ public final class CommunityStructureCache {
 	private void recordGenerated(CachedStructure structure) {
 		reserved.remove(structure.id());
 		lastUsed.put(structure.category(), structure.id());
+		removeFromReadyQueue(structure.category(), structure.id());
 		Set<String> ids = generatedIds.get(structure.category());
 		if (ids != null && ids.add(structure.id())) {
 			saveCacheState();
@@ -212,9 +233,8 @@ public final class CommunityStructureCache {
 	}
 
 	private int unusedCount(StructureCategory category) {
-		return (int) cached.getOrDefault(category, new CopyOnWriteArrayList<>()).stream()
-			.filter(structure -> !hasGenerated(category, structure.id()))
-			.count();
+		pruneReadyQueue(category);
+		return readyQueues.getOrDefault(category, new CopyOnWriteArrayList<>()).size();
 	}
 
 	private Set<String> cachedIds(StructureCategory category) {
@@ -248,42 +268,41 @@ public final class CommunityStructureCache {
 			return;
 		}
 
+		boolean changed = pruneReadyQueue(category);
 		List<RemoteStructure> latest = fetchLatestStructures(category);
-		List<RemoteStructure> unseen = latest.stream()
-			.filter(remote -> remote != null && remote.id() != null && !remote.id().isBlank())
-			.filter(remote -> !hasGenerated(category, remote.id()))
-			.toList();
-		if (unseen.isEmpty()) {
+		boolean hasUnseenRemote = latest.stream()
+			.anyMatch(remote -> remote != null && remote.id() != null && !remote.id().isBlank() && !hasGenerated(category, remote.id()));
+		if (!hasUnseenRemote) {
 			remoteExhausted.add(category);
+			if (changed) {
+				saveCacheState();
+			}
 			return;
 		}
 
 		remoteExhausted.remove(category);
-		Set<String> targetIds = new HashSet<>();
-		for (RemoteStructure remote : unseen) {
-			if (targetIds.size() >= config.cachePerCategory) {
-				break;
-			}
-			targetIds.add(remote.id());
-		}
-
-		for (CachedStructure structure : List.copyOf(cached.getOrDefault(category, new CopyOnWriteArrayList<>()))) {
-			if (!hasGenerated(category, structure.id()) && !targetIds.contains(structure.id())) {
-				removeCached(structure);
-			}
-		}
-
-		Set<String> localIds = cachedIds(category);
-		for (RemoteStructure remote : unseen) {
-			if (!targetIds.contains(remote.id())) {
+		CopyOnWriteArrayList<String> queue = readyQueues.get(category);
+		Set<String> queuedIds = new HashSet<>(queue);
+		for (RemoteStructure remote : latest) {
+			if (remote == null || remote.id() == null || remote.id().isBlank() || hasGenerated(category, remote.id())) {
 				continue;
 			}
-			if (localIds.contains(remote.id())) {
+			if (queuedIds.contains(remote.id())) {
 				refreshCachedMetadata(category, remote);
 				continue;
 			}
-			downloadRemote(category, remote);
-			localIds.add(remote.id());
+			if (queue.size() >= config.cachePerCategory) {
+				continue;
+			}
+			Optional<CachedStructure> downloaded = downloadRemote(category, remote);
+			if (downloaded.isPresent() && queue.addIfAbsent(remote.id())) {
+				queuedIds.add(remote.id());
+				changed = true;
+				CommunityStructures.LOGGER.info("Queued {} community structure {} in ready slot {}/{}", category.apiName(), fallbackName(remote), queue.size(), config.cachePerCategory);
+			}
+		}
+		if (changed) {
+			saveCacheState();
 		}
 	}
 
@@ -333,6 +352,16 @@ public final class CommunityStructureCache {
 				if (savedIds != null) {
 					ids.addAll(savedIds);
 				}
+				CopyOnWriteArrayList<String> queue = readyQueues.get(category);
+				queue.clear();
+				List<String> savedQueue = state.readyQueues == null ? null : state.readyQueues.get(category.apiName());
+				if (savedQueue != null) {
+					for (String id : savedQueue) {
+						if (id != null && !id.isBlank() && !queue.contains(id)) {
+							queue.add(id);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -343,6 +372,7 @@ public final class CommunityStructureCache {
 			CacheState state = new CacheState();
 			for (StructureCategory category : StructureCategory.values()) {
 				state.generatedIds.put(category.apiName(), Set.copyOf(generatedIds.getOrDefault(category, Set.of())));
+				state.readyQueues.put(category.apiName(), List.copyOf(readyQueues.getOrDefault(category, new CopyOnWriteArrayList<>())));
 			}
 			Path temp = cacheStatePath.resolveSibling(cacheStatePath.getFileName() + ".tmp");
 			try (var writer = Files.newBufferedWriter(temp)) {
@@ -364,6 +394,9 @@ public final class CommunityStructureCache {
 			Set<String> cachedIds = cachedIds(category);
 			Set<String> ids = generatedIds.get(category);
 			if (ids != null && ids.removeIf(id -> !cachedIds.contains(id))) {
+				changed = true;
+			}
+			if (pruneReadyQueue(category)) {
 				changed = true;
 			}
 		}
@@ -431,7 +464,9 @@ public final class CommunityStructureCache {
 		if (body == null || body.structures() == null) {
 			return List.of();
 		}
-		return body.structures();
+		return body.structures().stream()
+			.sorted((left, right) -> nullToEmpty(right.createdAt()).compareTo(nullToEmpty(left.createdAt())))
+			.toList();
 	}
 
 	private Optional<CachedStructure> downloadRemote(StructureCategory category, RemoteStructure remote) throws IOException, InterruptedException {
@@ -442,6 +477,7 @@ public final class CommunityStructureCache {
 		Path output = categoryDir(category).resolve(remote.id() + ".nbt");
 		CachedStructure remembered = new CachedStructure(category, remote.id(), fallbackName(remote), output, allowedBiomes(remote), placementPreset(remote, category), creatorName(remote), creatorId(remote));
 		if (Files.exists(output)) {
+			writeMetadata(output, remote);
 			remember(category, remembered);
 			remoteExhausted.remove(category);
 			return Optional.of(remembered);
@@ -513,6 +549,7 @@ public final class CommunityStructureCache {
 		if (list != null) {
 			list.removeIf(existing -> existing.id().equals(structure.id()));
 		}
+		removeFromReadyQueue(structure.category(), structure.id());
 		reserved.remove(structure.id());
 		Files.deleteIfExists(structure.path());
 		Files.deleteIfExists(metadataPath(structure.path()));
@@ -531,8 +568,37 @@ public final class CommunityStructureCache {
 		Files.deleteIfExists(metadataPath(structure.path()));
 		writeMetadata(movedPath, remote);
 		reserved.remove(structure.id());
+		removeFromReadyQueue(structure.category(), structure.id());
 		remember(newCategory, new CachedStructure(newCategory, remote.id(), fallbackName(remote), movedPath, allowedBiomes(remote), placementPreset(remote, newCategory), creatorName(remote), creatorId(remote)));
 		CommunityStructures.LOGGER.info("Moved cached community structure {} from {} to {}", fallbackName(remote), structure.category().apiName(), newCategory.apiName());
+	}
+
+	private CachedStructure findCached(StructureCategory category, String id) {
+		if (id == null) {
+			return null;
+		}
+		for (CachedStructure structure : cached.getOrDefault(category, new CopyOnWriteArrayList<>())) {
+			if (id.equals(structure.id())) {
+				return structure;
+			}
+		}
+		return null;
+	}
+
+	private boolean pruneReadyQueue(StructureCategory category) {
+		CopyOnWriteArrayList<String> queue = readyQueues.get(category);
+		if (queue == null || queue.isEmpty()) {
+			return false;
+		}
+		Set<String> localIds = cachedIds(category);
+		return queue.removeIf(id -> id == null || id.isBlank() || hasGenerated(category, id) || !localIds.contains(id));
+	}
+
+	private void removeFromReadyQueue(StructureCategory category, String id) {
+		CopyOnWriteArrayList<String> queue = readyQueues.get(category);
+		if (queue != null && id != null) {
+			queue.removeIf(id::equals);
+		}
 	}
 
 	private String excludeQuery(StructureCategory category) {
@@ -686,5 +752,6 @@ public final class CommunityStructureCache {
 
 	private static final class CacheState {
 		private Map<String, Set<String>> generatedIds = new HashMap<>();
+		private Map<String, List<String>> readyQueues = new HashMap<>();
 	}
 }
