@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "community_structures",
+  "version": "${version}",
+  "name": "Community Structures",
+  "description": "Downloads cached community .nbt structures and generates land builds through Minecraft's structure pipeline.",
+  "authors": [
+    "Codex"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.codex.communitystructures.CommunityStructures"
+    ],
+    "client": [
+      "com.codex.communitystructures.client.CommunityStructuresClient"
+    ],
+    "modmenu": [
+      "com.codex.communitystructures.client.CommunityStructuresModMenu"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.14",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*",
+    "cloth-config": "*"
+  }
+}

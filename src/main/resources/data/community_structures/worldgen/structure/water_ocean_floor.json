@@ -1,0 +1,9 @@
+{
+  "type": "community_structures:dynamic_structure",
+  "biomes": "#minecraft:is_ocean",
+  "category": "water",
+  "placement_preset": "ocean_floor",
+  "spawn_overrides": {},
+  "step": "surface_structures",
+  "terrain_adaptation": "beard_thin"
+}
