@@ -85,8 +85,10 @@ public final class CommunityStructureCapture {
 		ServerPlayNetworking.registerGlobalReceiver(CommunityStructureCapturePackets.CaptureActionPayload.ID, (payload, context) -> {
 			if (payload.action() == CommunityStructureCapturePackets.ACTION_CANCEL) {
 				cancel(context.player());
+			} else if (payload.action() == CommunityStructureCapturePackets.ACTION_TOGGLE_ALL_BLOCKS) {
+				toggle(context.player(), CaptureMode.ALL_BLOCKS);
 			} else {
-				toggle(context.player());
+				toggle(context.player(), CaptureMode.TRACKED);
 			}
 		});
 	}
@@ -158,39 +160,41 @@ public final class CommunityStructureCapture {
 		return before.isAir() || before.isReplaceable();
 	}
 
-	private static void toggle(ServerPlayerEntity player) {
+	private static void toggle(ServerPlayerEntity player, CaptureMode mode) {
 		UUID playerId = player.getUuid();
 		if (ACTIVE_CAPTURES.containsKey(playerId)) {
 			confirm(player);
 		} else {
-			start(player);
+			start(player, mode);
 		}
 	}
 
-	private static void start(ServerPlayerEntity player) {
-		ActiveCapture capture = ActiveCapture.around(player);
+	private static void start(ServerPlayerEntity player, CaptureMode mode) {
+		ActiveCapture capture = ActiveCapture.around(player, mode);
 		CapturedStructure selected = collect(player.getServerWorld(), capture);
 		ACTIVE_CAPTURES.put(player.getUuid(), capture);
 		sendPreview(player, capture.preview(selected));
 		if (selected.blocks().isEmpty()) {
-			player.sendMessage(Text.literal("Selected a 20x20x20 capture box, but it has 0 tracked player-placed blocks. Only blocks placed after this update can be detected."), false);
+			player.sendMessage(Text.literal(capture.mode().emptyMessage()), false);
 			return;
 		}
-		String skipped = selected.skippedLootContainers() > 0 ? " Extra loot containers skipped: " + selected.skippedLootContainers() + "." : "";
-		player.sendMessage(Text.literal("Selected " + selected.blocks().size() + " tracked blocks. Only the first 2 loot containers are included." + skipped + " Press K again to upload, or J to cancel."), false);
+		String lootNote = selected.lootContainers() > CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS
+			? " " + selected.lootContainers() + " loot containers are included; only 2 will get generated loot."
+			: " Loot containers are included; up to 2 will get generated loot.";
+		player.sendMessage(Text.literal("Selected " + selected.blocks().size() + " " + capture.mode().label() + "." + lootNote + " Press " + capture.mode().keyName() + " again to upload, or J to cancel."), false);
 	}
 
 	private static void confirm(ServerPlayerEntity player) {
 		ActiveCapture capture = ACTIVE_CAPTURES.remove(player.getUuid());
 		if (capture == null) {
-			start(player);
+			start(player, CaptureMode.TRACKED);
 			return;
 		}
 
 		sendPreview(player, CapturePreview.inactive());
 		CapturedStructure selected = collect(player.getServerWorld(), capture);
 		if (selected.blocks().isEmpty()) {
-			player.sendMessage(Text.literal("Capture cancelled: no tracked player-placed blocks were found in that 20x20x20 area."), false);
+			player.sendMessage(Text.literal(capture.mode().cancelMessage()), false);
 			return;
 		}
 		Optional<NonVanillaBlock> nonVanillaBlock = firstNonVanillaBlock(selected);
@@ -221,11 +225,17 @@ public final class CommunityStructureCapture {
 	}
 
 	private static CapturedStructure collect(ServerWorld world, ActiveCapture capture) {
+		return switch (capture.mode()) {
+			case TRACKED -> collectTracked(world, capture);
+			case ALL_BLOCKS -> collectAllBlocks(world, capture);
+		};
+	}
+
+	private static CapturedStructure collectTracked(ServerWorld world, ActiveCapture capture) {
 		PlayerPlacedBlocksState placedBlocks = PlayerPlacedBlocksState.forWorld(world);
 		List<CapturedBlock> blocks = new ArrayList<>();
 		int scanTop = Math.min(world.getTopY() - 1, capture.maxY());
 		int lootContainers = 0;
-		int skippedLootContainers = 0;
 
 		for (int y = Math.max(world.getBottomY(), capture.floorY()); y <= scanTop; y++) {
 			for (int x = capture.minX(); x <= capture.maxX(); x++) {
@@ -239,10 +249,6 @@ public final class CommunityStructureCapture {
 						continue;
 					}
 					if (CommunityStructureBlockEntities.isLootableContainer(world, pos)) {
-						if (lootContainers >= CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS) {
-							skippedLootContainers++;
-							continue;
-						}
 						lootContainers++;
 					}
 					blocks.add(new CapturedBlock(pos, state, CommunityStructureBlockEntities.capturedBlockEntityNbt(world, pos)));
@@ -250,7 +256,31 @@ public final class CommunityStructureCapture {
 			}
 		}
 
-		return new CapturedStructure(capture.min(), capture.max(), blocks, skippedLootContainers);
+		return new CapturedStructure(capture.min(), capture.max(), blocks, lootContainers);
+	}
+
+	private static CapturedStructure collectAllBlocks(ServerWorld world, ActiveCapture capture) {
+		List<CapturedBlock> blocks = new ArrayList<>();
+		int scanTop = Math.min(world.getTopY() - 1, capture.maxY());
+		int lootContainers = 0;
+
+		for (int y = Math.max(world.getBottomY(), capture.floorY()); y <= scanTop; y++) {
+			for (int x = capture.minX(); x <= capture.maxX(); x++) {
+				for (int z = capture.minZ(); z <= capture.maxZ(); z++) {
+					BlockPos pos = new BlockPos(x, y, z);
+					BlockState state = world.getBlockState(pos);
+					if (state.isAir()) {
+						continue;
+					}
+					if (CommunityStructureBlockEntities.isLootableContainer(world, pos)) {
+						lootContainers++;
+					}
+					blocks.add(new CapturedBlock(pos, state, CommunityStructureBlockEntities.capturedBlockEntityNbt(world, pos)));
+				}
+			}
+		}
+
+		return new CapturedStructure(capture.min(), capture.max(), blocks, lootContainers);
 	}
 
 	private static Optional<NonVanillaBlock> firstNonVanillaBlock(CapturedStructure selected) {
@@ -388,15 +418,49 @@ public final class CommunityStructureCapture {
 	private record PendingPlacement(net.minecraft.registry.RegistryKey<World> worldKey, Block placedBlock, List<BlockSample> samples) {
 	}
 
-	private record ActiveCapture(int minX, int floorY, int minZ, int maxX, int maxZ) {
-		private static ActiveCapture around(ServerPlayerEntity player) {
+	private enum CaptureMode {
+		TRACKED("tracked player-placed blocks", "K", "Selected a 20x20x20 capture box, but it has 0 tracked player-placed blocks. Use L if you want to capture every block in the area.", "Capture cancelled: no tracked player-placed blocks were found in that 20x20x20 area."),
+		ALL_BLOCKS("non-air blocks", "L", "Selected a 20x20x20 capture box, but it has 0 non-air blocks.", "Capture cancelled: no non-air blocks were found in that 20x20x20 area.");
+
+		private final String label;
+		private final String keyName;
+		private final String emptyMessage;
+		private final String cancelMessage;
+
+		CaptureMode(String label, String keyName, String emptyMessage, String cancelMessage) {
+			this.label = label;
+			this.keyName = keyName;
+			this.emptyMessage = emptyMessage;
+			this.cancelMessage = cancelMessage;
+		}
+
+		private String label() {
+			return label;
+		}
+
+		private String keyName() {
+			return keyName;
+		}
+
+		private String emptyMessage() {
+			return emptyMessage;
+		}
+
+		private String cancelMessage() {
+			return cancelMessage;
+		}
+	}
+
+	private record ActiveCapture(int minX, int floorY, int minZ, int maxX, int maxZ, CaptureMode mode) {
+		private static ActiveCapture around(ServerPlayerEntity player, CaptureMode mode) {
 			BlockPos floor = player.getBlockPos().down();
 			return new ActiveCapture(
 				floor.getX() - SELECTION_NEGATIVE_RADIUS,
 				floor.getY(),
 				floor.getZ() - SELECTION_NEGATIVE_RADIUS,
 				floor.getX() + SELECTION_POSITIVE_RADIUS,
-				floor.getZ() + SELECTION_POSITIVE_RADIUS
+				floor.getZ() + SELECTION_POSITIVE_RADIUS,
+				mode
 			);
 		}
 
@@ -430,7 +494,7 @@ public final class CommunityStructureCapture {
 	private record NonVanillaBlock(BlockPos pos, Identifier id) {
 	}
 
-	private record CapturedStructure(BlockPos origin, BlockPos max, List<CapturedBlock> blocks, int skippedLootContainers) {
+	private record CapturedStructure(BlockPos origin, BlockPos max, List<CapturedBlock> blocks, int lootContainers) {
 		private int sizeX() {
 			return Math.max(1, max.getX() - origin.getX() + 1);
 		}

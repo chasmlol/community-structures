@@ -21,6 +21,7 @@ import java.util.List;
 
 public final class CommunityStructuresClient implements ClientModInitializer {
 	private static KeyBinding captureKey;
+	private static KeyBinding captureAllBlocksKey;
 	private static KeyBinding cancelKey;
 	private static CapturePreview preview = CapturePreview.inactive();
 
@@ -32,6 +33,12 @@ public final class CommunityStructuresClient implements ClientModInitializer {
 			"key.community_structures.capture",
 			InputUtil.Type.KEYSYM,
 			GLFW.GLFW_KEY_K,
+			"key.categories.community_structures"
+		));
+		captureAllBlocksKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+			"key.community_structures.capture_all_blocks",
+			InputUtil.Type.KEYSYM,
+			GLFW.GLFW_KEY_L,
 			"key.categories.community_structures"
 		));
 		cancelKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -46,7 +53,12 @@ public final class CommunityStructuresClient implements ClientModInitializer {
 
 			while (captureKey.wasPressed()) {
 				if (ClientPlayNetworking.canSend(CommunityStructureCapturePackets.CaptureActionPayload.ID)) {
-					ClientPlayNetworking.send(new CommunityStructureCapturePackets.CaptureActionPayload(CommunityStructureCapturePackets.ACTION_TOGGLE));
+					ClientPlayNetworking.send(new CommunityStructureCapturePackets.CaptureActionPayload(CommunityStructureCapturePackets.ACTION_TOGGLE_TRACKED));
+				}
+			}
+			while (captureAllBlocksKey.wasPressed()) {
+				if (ClientPlayNetworking.canSend(CommunityStructureCapturePackets.CaptureActionPayload.ID)) {
+					ClientPlayNetworking.send(new CommunityStructureCapturePackets.CaptureActionPayload(CommunityStructureCapturePackets.ACTION_TOGGLE_ALL_BLOCKS));
 				}
 			}
 			while (cancelKey.wasPressed()) {

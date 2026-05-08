@@ -1,5 +1,6 @@
 {
   "key.categories.community_structures": "Community Structures",
-  "key.community_structures.capture": "Capture / upload structure",
+  "key.community_structures.capture": "Capture tracked structure",
+  "key.community_structures.capture_all_blocks": "Capture all blocks",
   "key.community_structures.cancel_capture": "Cancel structure capture"
 }

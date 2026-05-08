@@ -17,7 +17,7 @@ Generation now runs through Minecraft's built-in structure pipeline with a custo
 .\gradlew.bat build
 ```
 
-Copy `build/libs/community-structures-0.1.1.jar` into the Minecraft profile's `mods` folder.
+Copy `build/libs/community-structures-0.1.2.jar` into the Minecraft profile's `mods` folder.
 
 ## Config
 
@@ -41,6 +41,8 @@ Important defaults:
 Structure chat uses a WebSocket connection to `/api/chat/live` for instant delivery, with the older HTTP polling endpoint kept as a fallback.
 
 The client checks GitHub releases on startup. If a newer release exists, it posts a clickable update message in chat. Clicking it downloads the newest jar and schedules the replacement for after Minecraft closes; the player then starts Minecraft again manually.
+
+In-game capture uses `K` for tracked player-placed blocks and `L` for every non-air block inside the 20x20x20 capture box. `J` cancels the current preview. Container contents are never copied from uploads; all uploaded containers stay in the structure, and up to two are filled with random village loot when the structure generates.
 
 Use `/bless` while standing within 10 blocks of a generated community structure to open a small chest UI. Items placed in that chest are sent through the API to the structure creator and delivered when they are online.
 

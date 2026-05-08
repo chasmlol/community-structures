@@ -11,8 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class CommunityStructureCapturePackets {
-	public static final int ACTION_TOGGLE = 0;
+	public static final int ACTION_TOGGLE_TRACKED = 0;
 	public static final int ACTION_CANCEL = 1;
+	public static final int ACTION_TOGGLE_ALL_BLOCKS = 2;
 	private static final int MAX_PREVIEW_BLOCKS = 20000;
 
 	private CommunityStructureCapturePackets() {
