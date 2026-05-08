@@ -246,13 +246,22 @@ public final class CommunityStructureChat {
 		if (envelope.messages != null && !envelope.messages.isEmpty()) {
 			messages.addAll(envelope.messages);
 		}
-		if (messages.isEmpty()) {
-			return;
+		List<CommunityStructureBlessing.IncomingBlessing> blessings = new ArrayList<>();
+		if (envelope.blessing != null) {
+			blessings.add(envelope.blessing);
+		}
+		if (envelope.blessings != null && !envelope.blessings.isEmpty()) {
+			blessings.addAll(envelope.blessings);
 		}
 
 		ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
 		if (player != null) {
-			receiveMessageList(player, messages);
+			if (!messages.isEmpty()) {
+				receiveMessageList(player, messages);
+			}
+			if (!blessings.isEmpty()) {
+				CommunityStructureBlessing.receiveBlessings(player, blessings);
+			}
 		}
 	}
 
@@ -491,6 +500,8 @@ public final class CommunityStructureChat {
 	private static final class LiveChatEnvelope {
 		private IncomingChatMessage message;
 		private List<IncomingChatMessage> messages;
+		private CommunityStructureBlessing.IncomingBlessing blessing;
+		private List<CommunityStructureBlessing.IncomingBlessing> blessings;
 	}
 
 	private static final class IncomingChatMessage {

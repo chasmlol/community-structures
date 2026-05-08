@@ -39,3 +39,5 @@ Important defaults:
 - `downloadIntervalSeconds`: `15`
 
 Structure chat uses a WebSocket connection to `/api/chat/live` for instant delivery, with the older HTTP polling endpoint kept as a fallback.
+
+Use `/bless` while standing within 10 blocks of a generated community structure to open a small chest UI. Items placed in that chest are sent through the API to the structure creator and delivered when they are online.
