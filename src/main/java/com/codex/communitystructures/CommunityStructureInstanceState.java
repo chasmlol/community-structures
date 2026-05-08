@@ -121,6 +121,23 @@ public final class CommunityStructureInstanceState extends PersistentState {
 		return Optional.empty();
 	}
 
+	public Optional<Instance> nearby(String structureId, BlockPos pos, double radius) {
+		double radiusSquared = radius * radius;
+		int intRadius = (int) Math.ceil(radius);
+		for (Instance instance : instances.values()) {
+			if (!instance.structureId().equals(structureId)) {
+				continue;
+			}
+			if (!instance.containsExpanded(pos, intRadius)) {
+				continue;
+			}
+			if (instance.isNearBlock(pos, radiusSquared)) {
+				return Optional.of(instance);
+			}
+		}
+		return Optional.empty();
+	}
+
 	public record Instance(
 		String instanceId,
 		String structureId,

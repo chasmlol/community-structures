@@ -85,11 +85,12 @@ public final class CommunityStructureChat {
 		Optional<CommunityStructureInstanceState.Instance> nearby = CommunityStructureInstanceState.forWorld(sender.getServerWorld()).nearby(sender.getBlockPos(), CHAT_RADIUS);
 		if (nearby.isPresent()) {
 			CommunityStructureInstanceState.Instance instance = nearby.get();
-			if (instance.creatorId().equals(senderId)) {
+			ChatOwner owner = chatOwner(instance);
+			if (owner.id().equals(senderId)) {
 				return Optional.empty();
 			}
-			ActiveRoom room = ActiveRoom.fromVisitor(instance, senderId, sender.getGameProfile().getName());
-			return Optional.of(new ChatRoute(room, instance.creatorId(), instance.creatorName()));
+			ActiveRoom room = ActiveRoom.fromVisitor(instance, owner.id(), owner.name(), senderId, sender.getGameProfile().getName());
+			return Optional.of(new ChatRoute(room, owner.id(), owner.name()));
 		}
 
 		ActiveRoom active = ACTIVE_ROOMS.get(sender.getUuid());
@@ -106,6 +107,25 @@ public final class CommunityStructureChat {
 			return Optional.of(new ChatRoute(active, active.creatorId(), active.creatorName()));
 		}
 		return Optional.empty();
+	}
+
+	private static ChatOwner chatOwner(CommunityStructureInstanceState.Instance instance) {
+		Optional<ChatOwner> override = chatOwnerOverride();
+		if (override.isPresent()) {
+			return override.get();
+		}
+		return new ChatOwner(instance.creatorId(), instance.creatorName());
+	}
+
+	private static Optional<ChatOwner> chatOwnerOverride() {
+		CommunityStructureConfig config = CommunityStructures.config();
+		if (config == null || config.structureChatOwnerOverrideId == null || config.structureChatOwnerOverrideId.isBlank()) {
+			return Optional.empty();
+		}
+		String name = config.structureChatOwnerOverrideName == null || config.structureChatOwnerOverrideName.isBlank()
+			? config.structureChatOwnerOverrideId
+			: config.structureChatOwnerOverrideName;
+		return Optional.of(new ChatOwner(config.structureChatOwnerOverrideId, name));
 	}
 
 	public static void receiveDeathChatSessions(ServerPlayerEntity player, List<DeathChatSession> sessions) {
@@ -470,8 +490,15 @@ public final class CommunityStructureChat {
 		if (playerId.equals(message.creatorId)) {
 			return true;
 		}
-		return CommunityStructureInstanceState.forWorld(player.getServerWorld())
+		CommunityStructureInstanceState state = CommunityStructureInstanceState.forWorld(player.getServerWorld());
+		if (state
 			.nearby(message.structureId, message.creatorId, player.getBlockPos(), CHAT_RADIUS)
+			.isPresent()) {
+			return true;
+		}
+		return chatOwnerOverride()
+			.filter(owner -> owner.id().equals(message.creatorId))
+			.flatMap(owner -> state.nearby(message.structureId, player.getBlockPos(), CHAT_RADIUS))
 			.isPresent();
 	}
 
@@ -513,6 +540,9 @@ public final class CommunityStructureChat {
 	}
 
 	private record ChatRoute(ActiveRoom activeRoom, String toId, String toName) {
+	}
+
+	private record ChatOwner(String id, String name) {
 	}
 
 	private static final class LiveChatConnection implements WebSocket.Listener {
@@ -613,8 +643,8 @@ public final class CommunityStructureChat {
 			touch();
 		}
 
-		private static ActiveRoom fromVisitor(CommunityStructureInstanceState.Instance instance, String visitorId, String visitorName) {
-			return new ActiveRoom(roomId(instance.structureId(), instance.creatorId(), visitorId), instance.structureId(), instance.structureName(), instance.creatorId(), instance.creatorName(), visitorId, visitorName);
+		private static ActiveRoom fromVisitor(CommunityStructureInstanceState.Instance instance, String creatorId, String creatorName, String visitorId, String visitorName) {
+			return new ActiveRoom(roomId(instance.structureId(), creatorId, visitorId), instance.structureId(), instance.structureName(), creatorId, creatorName, visitorId, visitorName);
 		}
 
 		private static ActiveRoom fromIncoming(IncomingChatMessage message) {

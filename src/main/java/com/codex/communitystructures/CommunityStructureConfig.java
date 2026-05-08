@@ -18,6 +18,8 @@ public final class CommunityStructureConfig {
 	public boolean useBuiltInStructureGeneration = true;
 	public boolean legacyChunkEventPlacement = false;
 	public String apiBaseUrl = "http://49.12.246.16:5174";
+	public String structureChatOwnerOverrideId = "";
+	public String structureChatOwnerOverrideName = "";
 	public double landChancePerChunk = 1.0D;
 	public double waterChancePerChunk = 0.0D;
 	public double caveChancePerChunk = 0.0D;
@@ -72,6 +74,8 @@ public final class CommunityStructureConfig {
 		if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
 			apiBaseUrl = "http://49.12.246.16:5174";
 		}
+		structureChatOwnerOverrideId = cleanString(structureChatOwnerOverrideId);
+		structureChatOwnerOverrideName = cleanString(structureChatOwnerOverrideName);
 		landChancePerChunk = clampChance(landChancePerChunk);
 		waterChancePerChunk = 0.0D;
 		caveChancePerChunk = 0.0D;
@@ -119,6 +123,10 @@ public final class CommunityStructureConfig {
 
 	private static int clampSeparation(int separation, int spacing) {
 		return Math.max(0, Math.min(spacing - 1, separation));
+	}
+
+	private static String cleanString(String value) {
+		return value == null ? "" : value.trim();
 	}
 
 	public void save() {
