@@ -19,6 +19,11 @@ import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.loot.LootTable;
+import net.minecraft.loot.LootTables;
+import net.minecraft.loot.context.LootContextParameterSet;
+import net.minecraft.loot.context.LootContextParameters;
+import net.minecraft.loot.context.LootContextTypes;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.StringNbtReader;
@@ -35,6 +40,7 @@ import net.minecraft.util.TypeFilter;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.random.Random;
 import net.minecraft.world.GameRules;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
@@ -100,6 +106,7 @@ public final class CommunityStructureDeathHunt {
 		ActiveHunt activeHunt = activeHuntFor(entity.getUuid());
 		if (activeHunt != null) {
 			ACTIVE_HUNTS.remove(activeHunt.id());
+			dropRecoveryReward(entity);
 			MinecraftServer server = entity.getServer();
 			if (server != null) {
 				ServerPlayerEntity hunter = playerById(server, activeHunt.assignedPlayerId());
@@ -328,7 +335,38 @@ public final class CommunityStructureDeathHunt {
 			return;
 		}
 		ACTIVE_HUNTS.remove(hunt.id());
+		dropRecoveryReward(killedEntity);
 		completeHunt(player.getServer(), hunt.id(), hunt.assignedPlayerId(), hunt.assignedPlayerName(), player);
+	}
+
+	private static void dropRecoveryReward(net.minecraft.entity.LivingEntity entity) {
+		if (!(entity.getWorld() instanceof ServerWorld world) || world.getServer() == null) {
+			return;
+		}
+		Random random = entity.getRandom();
+		RegistryKey<LootTable> tableKey = random.nextBoolean()
+			? LootTables.END_CITY_TREASURE_CHEST
+			: LootTables.VILLAGE_WEAPONSMITH_CHEST;
+		LootTable table = world.getServer().getReloadableRegistries().getLootTable(tableKey);
+		LootContextParameterSet parameters = new LootContextParameterSet.Builder(world)
+			.add(LootContextParameters.ORIGIN, entity.getPos())
+			.build(LootContextTypes.CHEST);
+		List<ItemStack> stacks = new ArrayList<>(table.generateLoot(parameters, random));
+		stacks.removeIf(ItemStack::isEmpty);
+		if (stacks.isEmpty()) {
+			return;
+		}
+
+		for (int i = stacks.size() - 1; i > 0; i--) {
+			int swapIndex = random.nextInt(i + 1);
+			ItemStack stack = stacks.get(i);
+			stacks.set(i, stacks.get(swapIndex));
+			stacks.set(swapIndex, stack);
+		}
+		int keep = Math.max(1, (stacks.size() + 1) / 2);
+		for (int i = 0; i < keep; i++) {
+			entity.dropStack(stacks.get(i));
+		}
 	}
 
 	private static ActiveHunt activeHuntFor(UUID zombieId) {
