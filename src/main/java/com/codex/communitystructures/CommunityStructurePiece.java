@@ -53,6 +53,7 @@ public final class CommunityStructurePiece extends StructurePiece {
 	private final Vec3i rotatedSize;
 	private transient Map<Long, List<RawBlock>> rawBlocksByChunk;
 	private transient BlockState[] cachedPalette;
+	private transient Set<Long> lootContainerOffsets;
 
 	public CommunityStructurePiece(CachedStructure structure, BlockPos origin, BlockPos placementOrigin, BlockRotation rotation, Vec3i rotatedSize, Map<Long, List<RawBlock>> rawBlocksByChunk) {
 		super(
@@ -177,7 +178,7 @@ public final class CommunityStructurePiece extends StructurePiece {
 			BlockPos offset = rotatedOffset(pos.getX(), pos.getY(), pos.getZ(), rotatedSize, rotation);
 			BlockPos worldPos = origin.add(offset);
 			long chunkKey = ChunkPos.toLong(Math.floorDiv(worldPos.getX(), 16), Math.floorDiv(worldPos.getZ(), 16));
-			buckets.computeIfAbsent(chunkKey, ignored -> new ArrayList<>()).add(new RawBlock(worldPos, stateIndex));
+			buckets.computeIfAbsent(chunkKey, ignored -> new ArrayList<>()).add(new RawBlock(worldPos, stateIndex, index));
 		}
 		return buckets;
 	}
@@ -258,6 +259,9 @@ public final class CommunityStructurePiece extends StructurePiece {
 		if (cachedPalette == null) {
 			cachedPalette = rotatedPalette(serverWorld, snapshot, rotation);
 		}
+		if (lootContainerOffsets == null) {
+			lootContainerOffsets = lootContainerOffsets(snapshot, cachedPalette, rotation, rotatedSize);
+		}
 		rememberGeneratedInstance(serverWorld);
 
 		long chunkKey = ChunkPos.toLong(Math.floorDiv(chunkBox.getMinX(), 16), Math.floorDiv(chunkBox.getMinZ(), 16));
@@ -272,6 +276,16 @@ public final class CommunityStructurePiece extends StructurePiece {
 			}
 			if (!shouldLetTerrainWin(world, rawBlock.pos(), state)) {
 				world.setBlockState(rawBlock.pos(), state, BULK_PLACE_FLAGS);
+				NbtCompound blockNbt = rawBlock.blockIndex() >= 0 && rawBlock.blockIndex() < snapshot.blocks().size()
+					? snapshot.blocks().getCompound(rawBlock.blockIndex())
+					: new NbtCompound();
+				CommunityStructureBlockEntities.applyPlacedBlockEntity(
+					serverWorld,
+					rawBlock.pos(),
+					blockNbt.getCompound("nbt"),
+					lootContainerOffsets.contains(blockOffsetKey(rawBlock.pos().getX() - placementOrigin.getX(), rawBlock.pos().getY() - placementOrigin.getY(), rawBlock.pos().getZ() - placementOrigin.getZ())),
+					serverWorld.getSeed() ^ rawBlock.pos().asLong()
+				);
 			}
 		}
 	}
@@ -424,6 +438,27 @@ public final class CommunityStructurePiece extends StructurePiece {
 		return palette;
 	}
 
+	private static Set<Long> lootContainerOffsets(StructureSnapshot snapshot, BlockState[] palette, BlockRotation rotation, Vec3i rotatedSize) {
+		Set<Long> offsets = ConcurrentHashMap.newKeySet();
+		for (int index = 0; index < snapshot.blocks().size(); index++) {
+			if (offsets.size() >= CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS) {
+				break;
+			}
+			NbtCompound blockNbt = snapshot.blocks().getCompound(index);
+			int stateIndex = blockNbt.getInt("state");
+			if (stateIndex < 0 || stateIndex >= palette.length || !CommunityStructureBlockEntities.isLikelyLootContainerState(palette[stateIndex])) {
+				continue;
+			}
+			Vec3i pos = blockPos(blockNbt);
+			if (pos == null) {
+				continue;
+			}
+			BlockPos offset = rotatedOffset(pos.getX(), pos.getY(), pos.getZ(), rotatedSize, rotation);
+			offsets.add(blockOffsetKey(offset.getX(), offset.getY(), offset.getZ()));
+		}
+		return offsets;
+	}
+
 	private BlockState processedState(ServerWorld world, BlockPos pos, BlockState state) {
 		if (category == StructureCategory.CAVE) {
 			return state;
@@ -478,6 +513,10 @@ public final class CommunityStructurePiece extends StructurePiece {
 		};
 	}
 
+	private static long blockOffsetKey(int x, int y, int z) {
+		return BlockPos.asLong(x, y, z);
+	}
+
 	private static BlockRotation parseRotation(String value) {
 		if (value == null || value.isBlank()) {
 			return BlockRotation.NONE;
@@ -492,6 +531,6 @@ public final class CommunityStructurePiece extends StructurePiece {
 	public record StructureSnapshot(Vec3i size, NbtList palette, NbtList blocks) {
 	}
 
-	public record RawBlock(BlockPos pos, int stateIndex) {
+	public record RawBlock(BlockPos pos, int stateIndex, int blockIndex) {
 	}
 }

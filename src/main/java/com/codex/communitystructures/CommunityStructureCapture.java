@@ -173,10 +173,11 @@ public final class CommunityStructureCapture {
 		ACTIVE_CAPTURES.put(player.getUuid(), capture);
 		sendPreview(player, capture.preview(selected));
 		if (selected.blocks().isEmpty()) {
-			player.sendMessage(Text.literal("Selected a 5x5 capture box, but it has 0 tracked player-placed blocks. Only blocks placed after this update can be detected."), false);
+			player.sendMessage(Text.literal("Selected a 20x20x20 capture box, but it has 0 tracked player-placed blocks. Only blocks placed after this update can be detected."), false);
 			return;
 		}
-		player.sendMessage(Text.literal("Selected " + selected.blocks().size() + " tracked blocks. Press K again to upload, or J to cancel."), false);
+		String skipped = selected.skippedLootContainers() > 0 ? " Extra loot containers skipped: " + selected.skippedLootContainers() + "." : "";
+		player.sendMessage(Text.literal("Selected " + selected.blocks().size() + " tracked blocks. Only the first 2 loot containers are included." + skipped + " Press K again to upload, or J to cancel."), false);
 	}
 
 	private static void confirm(ServerPlayerEntity player) {
@@ -189,7 +190,7 @@ public final class CommunityStructureCapture {
 		sendPreview(player, CapturePreview.inactive());
 		CapturedStructure selected = collect(player.getServerWorld(), capture);
 		if (selected.blocks().isEmpty()) {
-			player.sendMessage(Text.literal("Capture cancelled: no tracked player-placed blocks were found in that 5x5 area."), false);
+			player.sendMessage(Text.literal("Capture cancelled: no tracked player-placed blocks were found in that 20x20x20 area."), false);
 			return;
 		}
 		Optional<NonVanillaBlock> nonVanillaBlock = firstNonVanillaBlock(selected);
@@ -223,6 +224,8 @@ public final class CommunityStructureCapture {
 		PlayerPlacedBlocksState placedBlocks = PlayerPlacedBlocksState.forWorld(world);
 		List<CapturedBlock> blocks = new ArrayList<>();
 		int scanTop = Math.min(world.getTopY() - 1, capture.maxY());
+		int lootContainers = 0;
+		int skippedLootContainers = 0;
 
 		for (int y = Math.max(world.getBottomY(), capture.floorY()); y <= scanTop; y++) {
 			for (int x = capture.minX(); x <= capture.maxX(); x++) {
@@ -235,12 +238,19 @@ public final class CommunityStructureCapture {
 					if (state.isAir()) {
 						continue;
 					}
-					blocks.add(new CapturedBlock(pos, state));
+					if (CommunityStructureBlockEntities.isLootableContainer(world, pos)) {
+						if (lootContainers >= CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS) {
+							skippedLootContainers++;
+							continue;
+						}
+						lootContainers++;
+					}
+					blocks.add(new CapturedBlock(pos, state, CommunityStructureBlockEntities.capturedBlockEntityNbt(world, pos)));
 				}
 			}
 		}
 
-		return new CapturedStructure(capture.min(), capture.max(), blocks);
+		return new CapturedStructure(capture.min(), capture.max(), blocks, skippedLootContainers);
 	}
 
 	private static Optional<NonVanillaBlock> firstNonVanillaBlock(CapturedStructure selected) {
@@ -275,6 +285,9 @@ public final class CommunityStructureCapture {
 			NbtCompound blockNbt = new NbtCompound();
 			blockNbt.put("pos", intList(block.pos().getX() - selected.origin().getX(), block.pos().getY() - selected.origin().getY(), block.pos().getZ() - selected.origin().getZ()));
 			blockNbt.putInt("state", stateIndex);
+			if (block.blockEntityNbt() != null && !block.blockEntityNbt().isEmpty()) {
+				blockNbt.put("nbt", block.blockEntityNbt().copy());
+			}
 			blocks.add(blockNbt);
 		}
 
@@ -407,13 +420,17 @@ public final class CommunityStructureCapture {
 		}
 	}
 
-	private record CapturedBlock(BlockPos pos, BlockState state) {
+	private record CapturedBlock(BlockPos pos, BlockState state, NbtCompound blockEntityNbt) {
+		private CapturedBlock {
+			pos = pos.toImmutable();
+			blockEntityNbt = blockEntityNbt == null ? null : blockEntityNbt.copy();
+		}
 	}
 
 	private record NonVanillaBlock(BlockPos pos, Identifier id) {
 	}
 
-	private record CapturedStructure(BlockPos origin, BlockPos max, List<CapturedBlock> blocks) {
+	private record CapturedStructure(BlockPos origin, BlockPos max, List<CapturedBlock> blocks, int skippedLootContainers) {
 		private int sizeX() {
 			return Math.max(1, max.getX() - origin.getX() + 1);
 		}

@@ -274,8 +274,9 @@ public final class CommunityStructurePlacer {
 			}
 			origin = applyFinalWorldOffset(origin, pending.category(), preset);
 
+			Set<Long> lootContainerOffsets = lootContainerOffsets(snapshot, palette, rotation, size);
 			if (snapshot.blockCount() >= config.progressivePlacementThresholdBlocks) {
-				ACTIVE.add(new ActivePlacement(pending.category(), cached, pending.chunkPos(), origin, snapshot, rotation, size, palette, landBlendPlan, 0, 0));
+				ACTIVE.add(new ActivePlacement(pending.category(), cached, pending.chunkPos(), origin, snapshot, rotation, size, palette, landBlendPlan, lootContainerOffsets, 0, 0));
 				CommunityStructures.LOGGER.info(
 					"Started gradual {} community structure {} at {} with {} blocks",
 					cached.category().apiName(),
@@ -286,7 +287,7 @@ public final class CommunityStructurePlacer {
 				return PlacementOutcome.PLACED;
 			}
 
-			int placedBlocks = placeSnapshotNow(world, pending.category(), origin, snapshot, palette, rotation, size);
+			int placedBlocks = placeSnapshotNow(world, pending.category(), origin, snapshot, palette, rotation, size, lootContainerOffsets);
 			boolean placed = placedBlocks > 0;
 			if (placed) {
 				if (pending.category() == StructureCategory.LAND && config.landClearVegetation && preset.shouldClearLandVegetation()) {
@@ -327,7 +328,15 @@ public final class CommunityStructurePlacer {
 			NbtCompound blockNbt = active.snapshot().blocks().getCompound(index);
 			PlacedBlock block = placedBlock(world, active.category(), active.origin(), blockNbt, active.palette(), active.rotatedSize(), active.rotation());
 			if (block != null) {
-				world.setBlockState(active.origin().add(block.offset()), block.state(), BULK_PLACE_FLAGS);
+				BlockPos worldPos = active.origin().add(block.offset());
+				world.setBlockState(worldPos, block.state(), BULK_PLACE_FLAGS);
+				CommunityStructureBlockEntities.applyPlacedBlockEntity(
+					world,
+					worldPos,
+					blockNbt.getCompound("nbt"),
+					active.lootContainerOffsets().contains(blockOffsetKey(block.offset().getX(), block.offset().getY(), block.offset().getZ())),
+					world.getSeed() ^ worldPos.asLong()
+				);
 				placed++;
 			}
 			index++;
@@ -359,7 +368,7 @@ public final class CommunityStructurePlacer {
 			return !ACTIVE.isEmpty();
 		} else {
 			ACTIVE.poll();
-			ACTIVE.add(new ActivePlacement(active.category(), active.structure(), active.chunkPos(), active.origin(), active.snapshot(), active.rotation(), active.rotatedSize(), active.palette(), active.landBlendPlan(), index, scanned));
+			ACTIVE.add(new ActivePlacement(active.category(), active.structure(), active.chunkPos(), active.origin(), active.snapshot(), active.rotation(), active.rotatedSize(), active.palette(), active.landBlendPlan(), active.lootContainerOffsets(), index, scanned));
 			return true;
 		}
 	}
@@ -407,13 +416,21 @@ public final class CommunityStructurePlacer {
 		return palette;
 	}
 
-	private static int placeSnapshotNow(ServerWorld world, StructureCategory category, BlockPos origin, StructureSnapshot snapshot, BlockState[] palette, BlockRotation rotation, Vec3i rotatedSize) {
+	private static int placeSnapshotNow(ServerWorld world, StructureCategory category, BlockPos origin, StructureSnapshot snapshot, BlockState[] palette, BlockRotation rotation, Vec3i rotatedSize, Set<Long> lootContainerOffsets) {
 		int placed = 0;
 		for (int index = 0; index < snapshot.blocks().size(); index++) {
 			NbtCompound blockNbt = snapshot.blocks().getCompound(index);
 			PlacedBlock block = placedBlock(world, category, origin, blockNbt, palette, rotatedSize, rotation);
 			if (block != null) {
-				world.setBlockState(origin.add(block.offset()), block.state(), BULK_PLACE_FLAGS);
+				BlockPos worldPos = origin.add(block.offset());
+				world.setBlockState(worldPos, block.state(), BULK_PLACE_FLAGS);
+				CommunityStructureBlockEntities.applyPlacedBlockEntity(
+					world,
+					worldPos,
+					blockNbt.getCompound("nbt"),
+					lootContainerOffsets.contains(blockOffsetKey(block.offset().getX(), block.offset().getY(), block.offset().getZ())),
+					world.getSeed() ^ worldPos.asLong()
+				);
 				placed++;
 			}
 		}
@@ -1447,6 +1464,27 @@ public final class CommunityStructurePlacer {
 		return ((long) x << 32) ^ (z & 0xffffffffL);
 	}
 
+	private static Set<Long> lootContainerOffsets(StructureSnapshot snapshot, BlockState[] palette, BlockRotation rotation, Vec3i rotatedSize) {
+		Set<Long> offsets = new HashSet<>();
+		for (int index = 0; index < snapshot.blocks().size(); index++) {
+			if (offsets.size() >= CommunityStructureBlockEntities.MAX_LOOT_CONTAINERS) {
+				break;
+			}
+			NbtCompound blockNbt = snapshot.blocks().getCompound(index);
+			int stateIndex = blockNbt.getInt("state");
+			if (stateIndex < 0 || stateIndex >= palette.length || !CommunityStructureBlockEntities.isLikelyLootContainerState(palette[stateIndex])) {
+				continue;
+			}
+			Vec3i pos = blockPos(blockNbt);
+			if (pos == null) {
+				continue;
+			}
+			BlockPos offset = rotatedOffset(pos.getX(), pos.getY(), pos.getZ(), rotatedSize, rotation);
+			offsets.add(blockOffsetKey(offset.getX(), offset.getY(), offset.getZ()));
+		}
+		return offsets;
+	}
+
 	private static long blockOffsetKey(int x, int y, int z) {
 		return BlockPos.asLong(x, y, z);
 	}
@@ -1614,6 +1652,6 @@ public final class CommunityStructurePlacer {
 	private record TerrainSurface(int worldY, BlockState state) {
 	}
 
-	private record ActivePlacement(StructureCategory category, CachedStructure structure, ChunkPos chunkPos, BlockPos origin, StructureSnapshot snapshot, BlockRotation rotation, Vec3i rotatedSize, BlockState[] palette, LandBlendPlan landBlendPlan, int nextIndex, int scanned) {
+	private record ActivePlacement(StructureCategory category, CachedStructure structure, ChunkPos chunkPos, BlockPos origin, StructureSnapshot snapshot, BlockRotation rotation, Vec3i rotatedSize, BlockState[] palette, LandBlendPlan landBlendPlan, Set<Long> lootContainerOffsets, int nextIndex, int scanned) {
 	}
 }
