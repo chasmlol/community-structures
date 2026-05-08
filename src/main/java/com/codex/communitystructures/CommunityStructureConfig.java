@@ -17,7 +17,7 @@ public final class CommunityStructureConfig {
 	public boolean enabled = true;
 	public boolean useBuiltInStructureGeneration = true;
 	public boolean legacyChunkEventPlacement = false;
-	public String apiBaseUrl = "http://localhost:5174";
+	public String apiBaseUrl = "http://49.12.246.16:5174";
 	public double landChancePerChunk = 1.0D;
 	public double waterChancePerChunk = 0.0D;
 	public double caveChancePerChunk = 0.0D;
@@ -70,7 +70,7 @@ public final class CommunityStructureConfig {
 
 	public CommunityStructureConfig normalized() {
 		if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
-			apiBaseUrl = "http://localhost:5174";
+			apiBaseUrl = "http://49.12.246.16:5174";
 		}
 		landChancePerChunk = clampChance(landChancePerChunk);
 		waterChancePerChunk = 0.0D;

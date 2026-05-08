@@ -29,7 +29,7 @@ config/community_structures.json
 
 Important defaults:
 
-- `apiBaseUrl`: `http://localhost:5174`
+- `apiBaseUrl`: `http://49.12.246.16:5174`
 - `useBuiltInStructureGeneration`: `true`
 - `legacyChunkEventPlacement`: `false`
 - `landChancePerChunk`, `waterChancePerChunk`, `caveChancePerChunk`: candidate frequency sliders
