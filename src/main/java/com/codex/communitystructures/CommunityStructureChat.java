@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.network.message.SignedMessage;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -353,6 +354,9 @@ public final class CommunityStructureChat {
 
 		ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
 		if (player != null) {
+			if (envelope.updateAvailable != null) {
+				receiveUpdateAvailable(player, envelope.updateAvailable);
+			}
 			if (!deathChatSessions.isEmpty()) {
 				receiveDeathChatSessions(player, deathChatSessions);
 			}
@@ -368,6 +372,20 @@ public final class CommunityStructureChat {
 			if (!deathReturns.isEmpty()) {
 				CommunityStructureDeathHunt.receiveDeathReturns(player, deathReturns);
 			}
+		}
+	}
+
+	private static void receiveUpdateAvailable(ServerPlayerEntity player, UpdateAvailable updateAvailable) {
+		if (updateAvailable.version == null || updateAvailable.version.isBlank() || updateAvailable.assetUrl == null || updateAvailable.assetUrl.isBlank()) {
+			return;
+		}
+		if (ServerPlayNetworking.canSend(player, CommunityStructureCapturePackets.UpdateAvailablePayload.ID)) {
+			ServerPlayNetworking.send(player, new CommunityStructureCapturePackets.UpdateAvailablePayload(
+				updateAvailable.version,
+				updateAvailable.htmlUrl,
+				updateAvailable.assetName,
+				updateAvailable.assetUrl
+			));
 		}
 	}
 
@@ -778,6 +796,14 @@ public final class CommunityStructureChat {
 		private List<CommunityStructureDeathHunt.IncomingDeathHunt> deathHunts;
 		private CommunityStructureDeathHunt.IncomingDeathReturn deathReturn;
 		private List<CommunityStructureDeathHunt.IncomingDeathReturn> deathReturns;
+		private UpdateAvailable updateAvailable;
+	}
+
+	private static final class UpdateAvailable {
+		private String version;
+		private String htmlUrl;
+		private String assetName;
+		private String assetUrl;
 	}
 
 	private static final class ChatState {

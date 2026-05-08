@@ -73,6 +73,9 @@ public final class CommunityStructuresClient implements ClientModInitializer {
 				? new CapturePreview(payload.min(), payload.max(), payload.selectedBlocks(), payload.blockPositions())
 				: CapturePreview.inactive();
 		});
+		ClientPlayNetworking.registerGlobalReceiver(CommunityStructureCapturePackets.UpdateAvailablePayload.ID, (payload, context) -> {
+			CommunityStructuresUpdateChecker.receiveServerUpdate(payload.version(), payload.htmlUrl(), payload.assetName(), payload.assetUrl());
+		});
 
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
 			if (!preview.active() || preview.blockPositions().isEmpty()) {

@@ -22,6 +22,7 @@ public final class CommunityStructureCapturePackets {
 	public static void register() {
 		PayloadTypeRegistry.playC2S().register(CaptureActionPayload.ID, CaptureActionPayload.CODEC);
 		PayloadTypeRegistry.playS2C().register(CapturePreviewPayload.ID, CapturePreviewPayload.CODEC);
+		PayloadTypeRegistry.playS2C().register(UpdateAvailablePayload.ID, UpdateAvailablePayload.CODEC);
 	}
 
 	public record CaptureActionPayload(int action) implements CustomPayload {
@@ -75,5 +76,39 @@ public final class CommunityStructureCapturePackets {
 		public Id<CapturePreviewPayload> getId() {
 			return ID;
 		}
+	}
+
+	public record UpdateAvailablePayload(String version, String htmlUrl, String assetName, String assetUrl) implements CustomPayload {
+		public static final Id<UpdateAvailablePayload> ID = new Id<>(Identifier.of(CommunityStructures.MOD_ID, "update_available"));
+		public static final PacketCodec<RegistryByteBuf, UpdateAvailablePayload> CODEC = CustomPayload.codecOf(
+			(payload, buffer) -> {
+				buffer.writeString(payload.version);
+				buffer.writeString(payload.htmlUrl);
+				buffer.writeString(payload.assetName);
+				buffer.writeString(payload.assetUrl);
+			},
+			buffer -> new UpdateAvailablePayload(
+				buffer.readString(64),
+				buffer.readString(512),
+				buffer.readString(256),
+				buffer.readString(1024)
+			)
+		);
+
+		public UpdateAvailablePayload {
+			version = clean(version);
+			htmlUrl = clean(htmlUrl);
+			assetName = clean(assetName);
+			assetUrl = clean(assetUrl);
+		}
+
+		@Override
+		public Id<UpdateAvailablePayload> getId() {
+			return ID;
+		}
+	}
+
+	private static String clean(String value) {
+		return value == null ? "" : value;
 	}
 }

@@ -40,7 +40,7 @@ public final class CommunityStructuresUpdateChecker {
 	private static final AtomicBoolean CHECK_STARTED = new AtomicBoolean();
 	private static final AtomicBoolean INSTALL_STARTED = new AtomicBoolean();
 	private static volatile ReleaseInfo availableRelease;
-	private static volatile boolean notified;
+	private static volatile String notifiedVersion = "";
 
 	private CommunityStructuresUpdateChecker() {
 	}
@@ -63,10 +63,14 @@ public final class CommunityStructuresUpdateChecker {
 	}
 
 	public static void tick(MinecraftClient client) {
-		if (!notified && availableRelease != null && client.player != null) {
-			notified = true;
-			sendUpdateMessage(client, availableRelease);
+		ReleaseInfo release = availableRelease;
+		if (release != null && client.player != null && !release.version().equals(notifiedVersion)) {
+			sendUpdateMessageAndRemember(client, release);
 		}
+	}
+
+	public static void receiveServerUpdate(String version, String htmlUrl, String assetName, String assetUrl) {
+		rememberAvailableRelease(new ReleaseInfo(normalizeVersion(version), clean(htmlUrl), clean(assetName), clean(assetUrl)));
 	}
 
 	private static void checkForUpdates(boolean forceMessage) {
@@ -78,10 +82,9 @@ public final class CommunityStructuresUpdateChecker {
 				Optional<ReleaseInfo> latest = fetchLatestRelease();
 				MinecraftClient client = MinecraftClient.getInstance();
 				if (latest.isPresent() && isNewer(latest.get().version(), currentVersion())) {
-					availableRelease = latest.get();
-					notified = false;
+					rememberAvailableRelease(latest.get());
 					if (forceMessage) {
-						client.execute(() -> sendUpdateMessage(client, latest.get()));
+						client.execute(() -> sendUpdateMessageAndRemember(client, latest.get()));
 					}
 				} else if (forceMessage) {
 					client.execute(() -> sendClientMessage(client, Text.literal("Community Structures is up to date.").formatted(Formatting.GREEN)));
@@ -98,6 +101,16 @@ public final class CommunityStructuresUpdateChecker {
 				}
 			}
 		});
+	}
+
+	private static void rememberAvailableRelease(ReleaseInfo release) {
+		if (release == null || release.version().isBlank() || release.assetUrl().isBlank() || !isNewer(release.version(), currentVersion())) {
+			return;
+		}
+		ReleaseInfo current = availableRelease;
+		if (current == null || current.version().equals(release.version()) || isNewer(release.version(), current.version())) {
+			availableRelease = release;
+		}
 	}
 
 	private static Optional<ReleaseInfo> fetchLatestRelease() throws IOException, InterruptedException {
@@ -137,6 +150,11 @@ public final class CommunityStructuresUpdateChecker {
 						.withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, release.htmlUrl()))
 						.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal("Open the GitHub release page."))))));
 		sendClientMessage(client, message);
+	}
+
+	private static void sendUpdateMessageAndRemember(MinecraftClient client, ReleaseInfo release) {
+		notifiedVersion = release.version();
+		sendUpdateMessage(client, release);
 	}
 
 	private static void installLatest(MinecraftClient client) {
@@ -294,6 +312,10 @@ public final class CommunityStructuresUpdateChecker {
 	private static String normalizeVersion(String version) {
 		String cleaned = version == null ? "" : version.trim();
 		return cleaned.startsWith("v") || cleaned.startsWith("V") ? cleaned.substring(1) : cleaned;
+	}
+
+	private static String clean(String value) {
+		return value == null ? "" : value.trim();
 	}
 
 	private static long currentPid() {
