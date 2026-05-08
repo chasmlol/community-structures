@@ -2,6 +2,8 @@ package com.codex.communitystructures;
 
 import com.google.gson.Gson;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,6 +43,7 @@ public final class CommunityStructureCache {
 	private final Set<String> reserved = ConcurrentHashMap.newKeySet();
 	private final Map<StructureCategory, String> lastUsed = new ConcurrentHashMap<>();
 	private final AtomicBoolean prefetchQueued = new AtomicBoolean();
+	private volatile RequestIdentity requestIdentity = RequestIdentity.EMPTY;
 	private ScheduledExecutorService executor;
 
 	public CommunityStructureCache(CommunityStructureConfig config) {
@@ -72,7 +75,7 @@ public final class CommunityStructureCache {
 		};
 		executor = Executors.newSingleThreadScheduledExecutor(factory);
 		if (config.refillCacheAfterUse) {
-			executor.execute(this::prefetchAll);
+			executor.schedule(this::prefetchAll, 5, TimeUnit.SECONDS);
 			executor.scheduleAtFixedRate(this::prefetchAll, config.downloadIntervalSeconds, config.downloadIntervalSeconds, TimeUnit.SECONDS);
 		}
 	}
@@ -82,6 +85,15 @@ public final class CommunityStructureCache {
 			executor.shutdownNow();
 			executor = null;
 		}
+	}
+
+	public void updateIdentity(MinecraftServer server) {
+		List<ServerPlayerEntity> players = server.getPlayerManager().getPlayerList();
+		if (players.isEmpty()) {
+			return;
+		}
+		ServerPlayerEntity player = players.get(0);
+		requestIdentity = new RequestIdentity(player.getUuidAsString(), player.getGameProfile().getName());
 	}
 
 	public Optional<CachedStructure> choose(StructureCategory category, net.minecraft.util.math.random.Random random) {
@@ -276,7 +288,7 @@ public final class CommunityStructureCache {
 
 	private RemoteStructure fetchStructure(String id) throws IOException, InterruptedException {
 		URI uri = apiUri("/api/structures/" + URLEncoder.encode(id, StandardCharsets.UTF_8));
-		HttpRequest request = HttpRequest.newBuilder(uri)
+		HttpRequest request = requestBuilder(uri)
 			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
@@ -294,7 +306,7 @@ public final class CommunityStructureCache {
 
 	private void downloadRandom(StructureCategory category) throws IOException, InterruptedException {
 		URI randomUri = apiUri("/api/structures/random?category=" + category.apiName() + excludeQuery(category));
-		HttpRequest randomRequest = HttpRequest.newBuilder(randomUri)
+		HttpRequest randomRequest = requestBuilder(randomUri)
 			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(8))
 			.header("accept", "application/json")
@@ -320,7 +332,7 @@ public final class CommunityStructureCache {
 		}
 
 		URI downloadUri = apiUri(remote.downloadUrl());
-		HttpRequest downloadRequest = HttpRequest.newBuilder(downloadUri)
+		HttpRequest downloadRequest = requestBuilder(downloadUri)
 			.version(HttpClient.Version.HTTP_1_1)
 			.timeout(Duration.ofSeconds(20))
 			.GET()
@@ -472,6 +484,19 @@ public final class CommunityStructureCache {
 		return cacheRoot.resolve(category.apiName());
 	}
 
+	private HttpRequest.Builder requestBuilder(URI uri) {
+		HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
+			.header("x-community-structures-client", "fabric");
+		RequestIdentity identity = requestIdentity;
+		if (!identity.playerId().isBlank()) {
+			builder.header("x-player-id", identity.playerId());
+		}
+		if (!identity.playerName().isBlank()) {
+			builder.header("x-player-name", identity.playerName());
+		}
+		return builder;
+	}
+
 	private URI apiUri(String pathOrUrl) {
 		if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
 			return URI.create(pathOrUrl);
@@ -517,5 +542,9 @@ public final class CommunityStructureCache {
 	}
 
 	private record CacheMetadata(Set<String> allowedBiomes, String placementPreset, String creatorName, String creatorId) {
+	}
+
+	private record RequestIdentity(String playerId, String playerName) {
+		private static final RequestIdentity EMPTY = new RequestIdentity("", "");
 	}
 }

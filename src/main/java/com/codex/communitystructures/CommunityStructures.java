@@ -30,6 +30,7 @@ public final class CommunityStructures implements ModInitializer {
 			cache.stop();
 			CommunityStructurePlacer.shutdown();
 		});
+		ServerTickEvents.END_SERVER_TICK.register(server -> cache.updateIdentity(server));
 		if (config.legacyChunkEventPlacement) {
 			ServerChunkEvents.CHUNK_GENERATE.register(CommunityStructurePlacer::tryPlace);
 			ServerTickEvents.END_WORLD_TICK.register(CommunityStructurePlacer::tick);
