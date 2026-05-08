@@ -85,11 +85,11 @@ public final class CommunityStructureChat {
 		Optional<CommunityStructureInstanceState.Instance> nearby = CommunityStructureInstanceState.forWorld(sender.getServerWorld()).nearby(sender.getBlockPos(), CHAT_RADIUS);
 		if (nearby.isPresent()) {
 			CommunityStructureInstanceState.Instance instance = nearby.get();
-			ActiveRoom room = ActiveRoom.fromVisitor(instance, senderId, sender.getGameProfile().getName());
-			if (!instance.creatorId().equals(senderId)) {
-				return Optional.of(new ChatRoute(room, instance.creatorId(), instance.creatorName()));
+			if (instance.creatorId().equals(senderId)) {
+				return Optional.empty();
 			}
-			return Optional.of(new ChatRoute(room, senderId, sender.getGameProfile().getName()));
+			ActiveRoom room = ActiveRoom.fromVisitor(instance, senderId, sender.getGameProfile().getName());
+			return Optional.of(new ChatRoute(room, instance.creatorId(), instance.creatorName()));
 		}
 
 		ActiveRoom active = ACTIVE_ROOMS.get(sender.getUuid());
@@ -97,7 +97,7 @@ public final class CommunityStructureChat {
 			ACTIVE_ROOMS.remove(sender.getUuid());
 			return Optional.empty();
 		}
-		if (active.creatorId().equals(senderId)) {
+		if (active.creatorId().equals(senderId) && !active.isSelfLoop()) {
 			active.touch();
 			return Optional.of(new ChatRoute(active, active.visitorId(), active.visitorName()));
 		}
@@ -682,6 +682,10 @@ public final class CommunityStructureChat {
 
 		private boolean remoteVisitorAllowed() {
 			return remoteVisitorAllowed;
+		}
+
+		private boolean isSelfLoop() {
+			return creatorId != null && creatorId.equals(visitorId);
 		}
 
 		private String roomId() {
