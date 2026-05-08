@@ -35,6 +35,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.TypeFilter;
 import net.minecraft.util.math.BlockPos;
@@ -236,7 +237,9 @@ public final class CommunityStructureDeathHunt {
 			String assignedPlayerName = hunt.assignedToName == null || hunt.assignedToName.isBlank() ? player.getGameProfile().getName() : hunt.assignedToName;
 			ACTIVE_HUNTS.put(hunt.id, new ActiveHunt(hunt.id, zombie.getUuid(), world.getRegistryKey(), expiresAt, assignedPlayerId, assignedPlayerName, hunt.deadPlayerId, hunt.deadPlayerName));
 			CommunityStructureChat.activateDeathHuntRoom(player, hunt.id, hunt.deadPlayerId, hunt.deadPlayerName, assignedPlayerId, assignedPlayerName, expiresAt);
-			player.sendMessage(Text.literal("A recovery zombie for " + safeName(hunt.deadPlayerName) + " has appeared. Kill it before the timer ends to return their gear."), false);
+			player.sendMessage(Text.empty()
+				.append(Text.literal(safeName(hunt.deadPlayerName)).formatted(Formatting.GOLD, Formatting.BOLD))
+				.append(Text.literal(" has died. Hunt his zombie corpse to return his items.")), false);
 		}
 	}
 
