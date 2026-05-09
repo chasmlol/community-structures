@@ -73,13 +73,16 @@ public final class CommunityConfiguredStructure extends Structure {
 		if (!matchesConfiguredSpread(context, config)) {
 			return Optional.empty();
 		}
+		if (preset == PlacementPreset.BRIDGE && !roughBridgeBiomeCandidate(context)) {
+			return Optional.empty();
+		}
 		if (isNearOriginSpawn(context.chunkPos(), config.spawnProtectionRadiusChunks)) {
 			return Optional.empty();
 		}
-		if (isNearRecentStart(context.chunkPos(), config.minPlacementDistanceChunks)) {
+		if (isNearRecentStart(context.chunkPos(), recentStartRadius(config))) {
 			return Optional.empty();
 		}
-		if (!hasStartCapacity(config)) {
+		if (preset != PlacementPreset.BRIDGE && !hasStartCapacity(config)) {
 			return Optional.empty();
 		}
 
@@ -93,7 +96,7 @@ public final class CommunityConfiguredStructure extends Structure {
 		if (reserved.isEmpty()) {
 			return Optional.empty();
 		}
-		if (!claimStartSlot(config)) {
+		if (preset != PlacementPreset.BRIDGE && !claimStartSlot(config)) {
 			CommunityStructures.cache().release(reserved.get());
 			return Optional.empty();
 		}
@@ -124,15 +127,7 @@ public final class CommunityConfiguredStructure extends Structure {
 			CachedStructure generatedStructure = generated.get();
 			CommunityStructurePiece.transferSnapshot(cached.path(), generatedStructure.path(), snapshot);
 			Map<Long, List<CommunityStructurePiece.RawBlock>> rawBlocksByChunk = CommunityStructurePiece.buildRawBlockBuckets(snapshot, placementOrigin, rotation, rotatedSize);
-			CommunityStructures.LOGGER.debug(
-				"Started built-in {} community structure {} at {} placing blocks at {} using preset {} with worldYOffset {}",
-				category.apiName(),
-				generatedStructure.name(),
-				origin.toShortString(),
-				placementOrigin.toShortString(),
-				preset.apiName(),
-				finalWorldYOffset()
-			);
+			logStartedStructure(generatedStructure, origin, placementOrigin);
 			rememberStart(context.chunkPos());
 			return Optional.of(new StructurePosition(origin, collector -> collector.addPiece(new CommunityStructurePiece(generatedStructure, origin, placementOrigin, rotation, rotatedSize, rawBlocksByChunk))));
 		} catch (IOException exception) {
@@ -147,19 +142,36 @@ public final class CommunityConfiguredStructure extends Structure {
 		return CommunityStructureWorldgen.STRUCTURE_TYPE;
 	}
 
+	private void logStartedStructure(CachedStructure generatedStructure, BlockPos origin, BlockPos placementOrigin) {
+		String message = "Started built-in {} community structure {} at {} placing blocks at {} using preset {} with worldYOffset {}";
+		Object[] arguments = {
+			category.apiName(),
+			generatedStructure.name(),
+			origin.toShortString(),
+			placementOrigin.toShortString(),
+			preset.apiName(),
+			finalWorldYOffset()
+		};
+		if (preset == PlacementPreset.BRIDGE) {
+			CommunityStructures.LOGGER.info(message, arguments);
+		} else {
+			CommunityStructures.LOGGER.debug(message, arguments);
+		}
+	}
+
 	private boolean matchesConfiguredSpread(Context context, CommunityStructureConfig config) {
 		int spacing = switch (category) {
-			case LAND -> config.landSpacingChunks;
+			case LAND -> preset == PlacementPreset.BRIDGE ? 1 : config.landSpacingChunks;
 			case WATER -> config.waterSpacingChunks;
 			case CAVE -> config.caveSpacingChunks;
 		};
 		int separation = switch (category) {
-			case LAND -> config.landSeparationChunks;
+			case LAND -> preset == PlacementPreset.BRIDGE ? 0 : config.landSeparationChunks;
 			case WATER -> config.waterSeparationChunks;
 			case CAVE -> config.caveSeparationChunks;
 		};
 		double chance = switch (category) {
-			case LAND -> config.landChancePerChunk;
+			case LAND -> preset == PlacementPreset.BRIDGE ? 1.0D : config.landChancePerChunk;
 			case WATER -> config.waterChancePerChunk;
 			case CAVE -> config.caveChancePerChunk;
 		};
@@ -176,6 +188,10 @@ public final class CommunityConfiguredStructure extends Structure {
 		int candidateX = regionX * spacing + random.nextInt(spread);
 		int candidateZ = regionZ * spacing + random.nextInt(spread);
 		return chunkPos.x == candidateX && chunkPos.z == candidateZ && random.nextDouble() < chance;
+	}
+
+	private int recentStartRadius(CommunityStructureConfig config) {
+		return preset == PlacementPreset.BRIDGE ? Math.min(1, config.minPlacementDistanceChunks) : config.minPlacementDistanceChunks;
 	}
 
 	private boolean biomeMatchesCategory(RegistryEntry<Biome> biome) {
@@ -241,13 +257,7 @@ public final class CommunityConfiguredStructure extends Structure {
 		List<Integer> minorOffsets = bridgeMinorOffsets(width);
 		int requiredBankBlocks = Math.max(1, Math.min(minorOffsets.size(), minorOffsets.size() / 2 + 1));
 
-		for (int attempt = 0; attempt < 18; attempt++) {
-			int minorCenter = context.random().nextInt(16);
-			int majorStart = context.random().nextInt(16);
-			BlockPos origin = alongZ
-				? new BlockPos(chunkStartX + minorCenter - width / 2, 0, chunkStartZ + majorStart)
-				: new BlockPos(chunkStartX + majorStart, 0, chunkStartZ + minorCenter - width / 2);
-
+		for (BlockPos origin : bridgeOriginCandidates(context, alongZ, length, width, seaLevel, chunkStartX, chunkStartZ)) {
 			BridgeBank startBank = bridgeBank(context, origin, alongZ, 0, width, seaLevel);
 			if (startBank.solidBlocks() < requiredBankBlocks) {
 				continue;
@@ -264,6 +274,59 @@ public final class CommunityConfiguredStructure extends Structure {
 			return Optional.of(new BlockPos(origin.getX(), y, origin.getZ()));
 		}
 		return Optional.empty();
+	}
+
+	private boolean roughBridgeBiomeCandidate(Context context) {
+		int seaLevel = context.chunkGenerator().getSeaLevel();
+		int centerX = context.chunkPos().getCenterX();
+		int centerZ = context.chunkPos().getCenterZ();
+		int[][] samples = {
+			{0, 0},
+			{8, 0},
+			{-8, 0},
+			{0, 8},
+			{0, -8},
+			{16, 0},
+			{-16, 0},
+			{0, 16},
+			{0, -16}
+		};
+		for (int[] sample : samples) {
+			RegistryEntry<Biome> biome = biomeAt(context, centerX + sample[0], seaLevel, centerZ + sample[1]);
+			if (biome.isIn(BiomeTags.IS_RIVER)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private List<BlockPos> bridgeOriginCandidates(Context context, boolean alongZ, int length, int width, int seaLevel, int chunkStartX, int chunkStartZ) {
+		List<BlockPos> candidates = new ArrayList<>();
+		int localStartX = context.random().nextInt(2);
+		int localStartZ = context.random().nextInt(2);
+		for (int localX = localStartX; localX < 16; localX += 2) {
+			for (int localZ = localStartZ; localZ < 16; localZ += 2) {
+				int waterX = chunkStartX + localX;
+				int waterZ = chunkStartZ + localZ;
+				if (!bridgeIsWater(context, waterX, waterZ, seaLevel)) {
+					continue;
+				}
+				for (int majorShift = -2; majorShift <= 2; majorShift += 2) {
+					for (int minorShift = -1; minorShift <= 1; minorShift++) {
+						int majorStart = (alongZ ? waterZ : waterX) - length / 2 + majorShift;
+						int minorStart = (alongZ ? waterX : waterZ) - width / 2 + minorShift;
+						BlockPos origin = alongZ
+							? new BlockPos(minorStart, 0, majorStart)
+							: new BlockPos(majorStart, 0, minorStart);
+						candidates.add(origin);
+						if (candidates.size() >= 80) {
+							return candidates;
+						}
+					}
+				}
+			}
+		}
+		return candidates;
 	}
 
 	private boolean bridgeChunkHasWaterNearby(Context context, Vec3i size, int seaLevel) {

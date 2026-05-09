@@ -23,7 +23,7 @@ public final class CommunityStructureConfig {
 	public double landChancePerChunk = 1.0D;
 	public double waterChancePerChunk = 0.0D;
 	public double caveChancePerChunk = 0.0D;
-	public int landSpacingChunks = 1;
+	public int landSpacingChunks = 8;
 	public int waterSpacingChunks = 12;
 	public int caveSpacingChunks = 10;
 	public int landSeparationChunks = 0;
