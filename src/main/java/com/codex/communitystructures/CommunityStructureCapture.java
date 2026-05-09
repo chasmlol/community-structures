@@ -268,7 +268,7 @@ public final class CommunityStructureCapture {
 			}
 		}
 
-		return new CapturedStructure(capture.min(), capture.max(), blocks, lootContainers);
+		return capturedStructure(capture, blocks, lootContainers);
 	}
 
 	private static CapturedStructure collectAllBlocks(ServerWorld world, ActiveCapture capture) {
@@ -292,7 +292,30 @@ public final class CommunityStructureCapture {
 			}
 		}
 
-		return new CapturedStructure(capture.min(), capture.max(), blocks, lootContainers);
+		return capturedStructure(capture, blocks, lootContainers);
+	}
+
+	private static CapturedStructure capturedStructure(ActiveCapture capture, List<CapturedBlock> blocks, int lootContainers) {
+		if (capture.mode() != CaptureMode.BRIDGE || blocks.isEmpty()) {
+			return new CapturedStructure(capture.min(), capture.max(), blocks, lootContainers);
+		}
+
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int minZ = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
+		int maxZ = Integer.MIN_VALUE;
+		for (CapturedBlock block : blocks) {
+			BlockPos pos = block.pos();
+			minX = Math.min(minX, pos.getX());
+			minY = Math.min(minY, pos.getY());
+			minZ = Math.min(minZ, pos.getZ());
+			maxX = Math.max(maxX, pos.getX());
+			maxY = Math.max(maxY, pos.getY());
+			maxZ = Math.max(maxZ, pos.getZ());
+		}
+		return new CapturedStructure(new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ), blocks, lootContainers);
 	}
 
 	private static Optional<NonVanillaBlock> firstNonVanillaBlock(CapturedStructure selected) {

@@ -210,9 +210,12 @@ public final class CommunityConfiguredStructure extends Structure {
 			if (rotatedSize.getX() > config.maxStructureWidth || rotatedSize.getZ() > config.maxStructureWidth || rotatedSize.getY() > config.maxStructureHeight) {
 				continue;
 			}
-			Optional<BlockPos> origin = bridgeOrigin(context, rotatedSize);
-			if (origin.isPresent()) {
-				return Optional.of(new PlacementPlan(origin.get(), rotation, rotatedSize));
+			CommunityStructurePiece.Footprint footprint = CommunityStructurePiece.placeableFootprint(snapshot, rotation);
+			Optional<BlockPos> footprintOrigin = bridgeOrigin(context, footprint.size());
+			if (footprintOrigin.isPresent()) {
+				Vec3i minOffset = footprint.minOffset();
+				BlockPos origin = footprintOrigin.get().add(-minOffset.getX(), -minOffset.getY(), -minOffset.getZ());
+				return Optional.of(new PlacementPlan(origin, rotation, rotatedSize));
 			}
 		}
 		return Optional.empty();
@@ -229,9 +232,13 @@ public final class CommunityConfiguredStructure extends Structure {
 		int chunkStartX = context.chunkPos().getStartX();
 		int chunkStartZ = context.chunkPos().getStartZ();
 		int seaLevel = context.chunkGenerator().getSeaLevel();
-		int requiredBankBlocks = Math.max(2, Math.min(width, width / 2 + 1));
+		if (!bridgeChunkHasWaterNearby(context, size, seaLevel)) {
+			return Optional.empty();
+		}
+		List<Integer> minorOffsets = bridgeMinorOffsets(width);
+		int requiredBankBlocks = Math.max(1, Math.min(minorOffsets.size(), minorOffsets.size() / 2 + 1));
 
-		for (int attempt = 0; attempt < 48; attempt++) {
+		for (int attempt = 0; attempt < 18; attempt++) {
 			int minorCenter = context.random().nextInt(16);
 			int majorStart = context.random().nextInt(16);
 			BlockPos origin = alongZ
@@ -254,6 +261,29 @@ public final class CommunityConfiguredStructure extends Structure {
 			return Optional.of(new BlockPos(origin.getX(), y, origin.getZ()));
 		}
 		return Optional.empty();
+	}
+
+	private boolean bridgeChunkHasWaterNearby(Context context, Vec3i size, int seaLevel) {
+		int centerX = context.chunkPos().getCenterX();
+		int centerZ = context.chunkPos().getCenterZ();
+		int range = Math.min(24, Math.max(8, Math.max(size.getX(), size.getZ())));
+		int[][] samples = {
+			{0, 0},
+			{8, 0},
+			{-8, 0},
+			{0, 8},
+			{0, -8},
+			{range, 0},
+			{-range, 0},
+			{0, range},
+			{0, -range}
+		};
+		for (int[] sample : samples) {
+			if (bridgeIsWater(context, centerX + sample[0], centerZ + sample[1], seaLevel)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private BridgeBank bridgeBank(Context context, BlockPos origin, boolean alongZ, int majorOffset, int width, int seaLevel) {

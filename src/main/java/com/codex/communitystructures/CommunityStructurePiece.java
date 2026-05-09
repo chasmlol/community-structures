@@ -245,6 +245,44 @@ public final class CommunityStructurePiece extends StructurePiece {
 		};
 	}
 
+	public static Footprint placeableFootprint(StructureSnapshot snapshot, BlockRotation rotation) {
+		Vec3i rotatedSize = rotatedSize(snapshot.size(), rotation);
+		boolean[] placeableStates = placeablePaletteStates(snapshot.palette());
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int minZ = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
+		int maxZ = Integer.MIN_VALUE;
+
+		for (int index = 0; index < snapshot.blocks().size(); index++) {
+			NbtCompound blockNbt = snapshot.blocks().getCompound(index);
+			int stateIndex = blockNbt.getInt("state");
+			if (stateIndex < 0 || stateIndex >= placeableStates.length || !placeableStates[stateIndex]) {
+				continue;
+			}
+			Vec3i pos = blockPos(blockNbt);
+			if (pos == null) {
+				continue;
+			}
+			BlockPos offset = rotatedOffset(pos.getX(), pos.getY(), pos.getZ(), rotatedSize, rotation);
+			minX = Math.min(minX, offset.getX());
+			minY = Math.min(minY, offset.getY());
+			minZ = Math.min(minZ, offset.getZ());
+			maxX = Math.max(maxX, offset.getX());
+			maxY = Math.max(maxY, offset.getY());
+			maxZ = Math.max(maxZ, offset.getZ());
+		}
+
+		if (minX == Integer.MAX_VALUE) {
+			return new Footprint(Vec3i.ZERO, rotatedSize);
+		}
+		return new Footprint(
+			new Vec3i(minX, minY, minZ),
+			new Vec3i(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1)
+		);
+	}
+
 	private void placeChunkBlocks(StructureWorldAccess world, BlockBox chunkBox) throws IOException {
 		ServerWorld serverWorld = world.toServerWorld();
 		CommunityStructureConfig config = CommunityStructures.config();
@@ -532,5 +570,8 @@ public final class CommunityStructurePiece extends StructurePiece {
 	}
 
 	public record RawBlock(BlockPos pos, int stateIndex, int blockIndex) {
+	}
+
+	public record Footprint(Vec3i minOffset, Vec3i size) {
 	}
 }
