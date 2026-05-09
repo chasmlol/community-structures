@@ -79,6 +79,9 @@ public final class CommunityConfiguredStructure extends Structure {
 		if (isNearRecentStart(context.chunkPos(), config.minPlacementDistanceChunks)) {
 			return Optional.empty();
 		}
+		if (!hasStartCapacity(config)) {
+			return Optional.empty();
+		}
 
 		RegistryEntry<Biome> centerBiome = biomeAt(context, context.chunkPos().getCenterX(), context.chunkGenerator().getSeaLevel(), context.chunkPos().getCenterZ());
 		if (!biomeMatchesCategory(centerBiome)) {
@@ -121,7 +124,7 @@ public final class CommunityConfiguredStructure extends Structure {
 			CachedStructure generatedStructure = generated.get();
 			CommunityStructurePiece.transferSnapshot(cached.path(), generatedStructure.path(), snapshot);
 			Map<Long, List<CommunityStructurePiece.RawBlock>> rawBlocksByChunk = CommunityStructurePiece.buildRawBlockBuckets(snapshot, placementOrigin, rotation, rotatedSize);
-			CommunityStructures.LOGGER.info(
+			CommunityStructures.LOGGER.debug(
 				"Started built-in {} community structure {} at {} placing blocks at {} using preset {} with worldYOffset {}",
 				category.apiName(),
 				generatedStructure.name(),
@@ -500,6 +503,15 @@ public final class CommunityConfiguredStructure extends Structure {
 			STARTS_IN_WINDOW.set(0);
 		}
 		return STARTS_IN_WINDOW.incrementAndGet() <= config.maxWorldgenStartsPerSecond;
+	}
+
+	private boolean hasStartCapacity(CommunityStructureConfig config) {
+		long second = System.currentTimeMillis() / 1000L;
+		long current = START_WINDOW_SECOND.get();
+		if (current != second) {
+			return true;
+		}
+		return STARTS_IN_WINDOW.get() < config.maxWorldgenStartsPerSecond;
 	}
 
 	private int salt() {

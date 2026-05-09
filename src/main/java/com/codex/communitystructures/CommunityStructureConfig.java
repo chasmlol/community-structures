@@ -45,8 +45,8 @@ public final class CommunityStructureConfig {
 	public boolean landClearVegetation = true;
 	public int landVegetationClearanceMargin = 2;
 	public boolean landApplyBiomeSnow = true;
-	public int minPlacementDistanceChunks = 0;
-	public int maxWorldgenStartsPerSecond = 4;
+	public int minPlacementDistanceChunks = 4;
+	public int maxWorldgenStartsPerSecond = 1;
 	public int maxPlacementsPerTick = 1;
 	public int maxStructureBlocksPerTick = 16384;
 	public int progressivePlacementThresholdBlocks = 4096;

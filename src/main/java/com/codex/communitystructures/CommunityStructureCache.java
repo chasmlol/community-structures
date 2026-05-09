@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -194,20 +193,8 @@ public final class CommunityStructureCache {
 			return Optional.empty();
 		}
 
-		try {
-			Path generatedDir = cacheRoot.resolve("generated").resolve(structure.category().apiName());
-			Files.createDirectories(generatedDir);
-			Path output = generatedDir.resolve(structure.id() + "-" + UUID.randomUUID() + ".nbt");
-			Files.copy(structure.path(), output, StandardCopyOption.REPLACE_EXISTING);
-			recordGenerated(structure);
-
-			return Optional.of(new CachedStructure(structure.category(), structure.id(), structure.name(), output, structure.allowedBiomes(), structure.placementPreset(), structure.creatorName(), structure.creatorId()));
-		} catch (IOException exception) {
-			reserved.remove(structure.id());
-			CommunityStructures.LOGGER.warn("Could not prepare generated copy of community structure {}", structure.name(), exception);
-			prefetchSoon();
-			return Optional.empty();
-		}
+		recordGenerated(structure);
+		return Optional.of(structure);
 	}
 
 	public void markUsed(CachedStructure structure) {
