@@ -82,7 +82,7 @@ public final class CommunityConfiguredStructure extends Structure {
 		if (isNearRecentStart(context.chunkPos(), recentStartRadius(config))) {
 			return Optional.empty();
 		}
-		if (preset != PlacementPreset.BRIDGE && !hasStartCapacity(config)) {
+		if (!hasStartCapacity(config)) {
 			return Optional.empty();
 		}
 
@@ -96,7 +96,7 @@ public final class CommunityConfiguredStructure extends Structure {
 		if (reserved.isEmpty()) {
 			return Optional.empty();
 		}
-		if (preset != PlacementPreset.BRIDGE && !claimStartSlot(config)) {
+		if (!claimStartSlot(config)) {
 			CommunityStructures.cache().release(reserved.get());
 			return Optional.empty();
 		}
@@ -161,7 +161,7 @@ public final class CommunityConfiguredStructure extends Structure {
 
 	private boolean matchesConfiguredSpread(Context context, CommunityStructureConfig config) {
 		int spacing = switch (category) {
-			case LAND -> preset == PlacementPreset.BRIDGE ? 1 : config.landSpacingChunks;
+			case LAND -> preset == PlacementPreset.BRIDGE ? bridgeSpacing(config) : config.landSpacingChunks;
 			case WATER -> config.waterSpacingChunks;
 			case CAVE -> config.caveSpacingChunks;
 		};
@@ -188,6 +188,10 @@ public final class CommunityConfiguredStructure extends Structure {
 		int candidateX = regionX * spacing + random.nextInt(spread);
 		int candidateZ = regionZ * spacing + random.nextInt(spread);
 		return chunkPos.x == candidateX && chunkPos.z == candidateZ && random.nextDouble() < chance;
+	}
+
+	private int bridgeSpacing(CommunityStructureConfig config) {
+		return Math.max(4, Math.min(24, config.landSpacingChunks));
 	}
 
 	private int recentStartRadius(CommunityStructureConfig config) {
@@ -282,10 +286,6 @@ public final class CommunityConfiguredStructure extends Structure {
 		int centerZ = context.chunkPos().getCenterZ();
 		int[][] samples = {
 			{0, 0},
-			{8, 0},
-			{-8, 0},
-			{0, 8},
-			{0, -8},
 			{16, 0},
 			{-16, 0},
 			{0, 16},
