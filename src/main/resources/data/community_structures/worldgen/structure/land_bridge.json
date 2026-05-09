@@ -1,0 +1,9 @@
+{
+  "type": "community_structures:dynamic_structure",
+  "biomes": "#minecraft:is_overworld",
+  "category": "land",
+  "placement_preset": "bridge",
+  "spawn_overrides": {},
+  "step": "surface_structures",
+  "terrain_adaptation": "none"
+}

@@ -49,6 +49,7 @@ public final class CommunityConfiguredStructure extends Structure {
 	private static final int CAVE_SALT = 0x3c6ef372;
 	private static final int SURFACE_RUIN_SALT = 0x4a7c15d9;
 	private static final int BURIED_RUIN_SALT = 0x5f3759df;
+	private static final int BRIDGE_SALT = 0x1badd00d;
 	private static final int RECENT_START_LIMIT = 512;
 	private static final Queue<ChunkPos> RECENT_STARTS = new ConcurrentLinkedQueue<>();
 	private static final AtomicLong START_WINDOW_SECOND = new AtomicLong(-1L);
@@ -97,24 +98,19 @@ public final class CommunityConfiguredStructure extends Structure {
 		CachedStructure cached = reserved.get();
 		try {
 			CommunityStructurePiece.StructureSnapshot snapshot = CommunityStructurePiece.readSnapshot(cached.path(), config.maxDownloadBytes);
-			BlockRotation rotation = BlockRotation.random(context.random());
-			Vec3i rotatedSize = CommunityStructurePiece.rotatedSize(snapshot.size(), rotation);
+			PlacementPlan plan = placementPlan(context, snapshot, config);
+			if (plan == null) {
+				CommunityStructures.cache().release(cached);
+				return Optional.empty();
+			}
+			BlockRotation rotation = plan.rotation();
+			Vec3i rotatedSize = plan.rotatedSize();
 			if (rotatedSize.getX() > config.maxStructureWidth || rotatedSize.getZ() > config.maxStructureWidth || rotatedSize.getY() > config.maxStructureHeight) {
 				CommunityStructures.LOGGER.info("Skipping oversized {} community structure {} with rotated size {}", category.apiName(), cached.name(), rotatedSize);
 				CommunityStructures.cache().release(cached);
 				return Optional.empty();
 			}
-
-			BlockPos footprintOrigin = centeredFootprintOrigin(context.chunkPos(), rotatedSize);
-			BlockPos origin = switch (category) {
-				case LAND -> landOrigin(context, footprintOrigin, rotatedSize, config);
-				case WATER -> waterOrigin(context, footprintOrigin, rotatedSize);
-				case CAVE -> caveOrigin(context, footprintOrigin, rotatedSize, config);
-			};
-			if (origin == null) {
-				CommunityStructures.cache().release(cached);
-				return Optional.empty();
-			}
+			BlockPos origin = plan.origin();
 			BlockPos placementOrigin = applyFinalWorldOffset(origin);
 
 			Optional<CachedStructure> generated = CommunityStructures.cache().materializeForWorldgen(cached);
@@ -180,11 +176,155 @@ public final class CommunityConfiguredStructure extends Structure {
 	}
 
 	private boolean biomeMatchesCategory(RegistryEntry<Biome> biome) {
+		if (category == StructureCategory.LAND && preset == PlacementPreset.BRIDGE) {
+			return biome.isIn(BiomeTags.IS_OVERWORLD) && !biome.isIn(BiomeTags.IS_OCEAN);
+		}
 		return switch (category) {
 			case LAND -> !biome.isIn(BiomeTags.IS_OCEAN) && !biome.isIn(BiomeTags.IS_RIVER);
 			case WATER -> biome.isIn(BiomeTags.IS_OCEAN) || biome.isIn(BiomeTags.IS_DEEP_OCEAN);
 			case CAVE -> biome.isIn(BiomeTags.IS_OVERWORLD);
 		};
+	}
+
+	private PlacementPlan placementPlan(Context context, CommunityStructurePiece.StructureSnapshot snapshot, CommunityStructureConfig config) {
+		if (category == StructureCategory.LAND && preset == PlacementPreset.BRIDGE) {
+			return bridgePlacementPlan(context, snapshot, config).orElse(null);
+		}
+		BlockRotation rotation = BlockRotation.random(context.random());
+		Vec3i rotatedSize = CommunityStructurePiece.rotatedSize(snapshot.size(), rotation);
+		BlockPos footprintOrigin = centeredFootprintOrigin(context.chunkPos(), rotatedSize);
+		BlockPos origin = switch (category) {
+			case LAND -> landOrigin(context, footprintOrigin, rotatedSize, config);
+			case WATER -> waterOrigin(context, footprintOrigin, rotatedSize);
+			case CAVE -> caveOrigin(context, footprintOrigin, rotatedSize, config);
+		};
+		return origin == null ? null : new PlacementPlan(origin, rotation, rotatedSize);
+	}
+
+	private Optional<PlacementPlan> bridgePlacementPlan(Context context, CommunityStructurePiece.StructureSnapshot snapshot, CommunityStructureConfig config) {
+		List<BlockRotation> rotations = context.random().nextBoolean()
+			? List.of(BlockRotation.NONE, BlockRotation.CLOCKWISE_90)
+			: List.of(BlockRotation.CLOCKWISE_90, BlockRotation.NONE);
+		for (BlockRotation rotation : rotations) {
+			Vec3i rotatedSize = CommunityStructurePiece.rotatedSize(snapshot.size(), rotation);
+			if (rotatedSize.getX() > config.maxStructureWidth || rotatedSize.getZ() > config.maxStructureWidth || rotatedSize.getY() > config.maxStructureHeight) {
+				continue;
+			}
+			Optional<BlockPos> origin = bridgeOrigin(context, rotatedSize);
+			if (origin.isPresent()) {
+				return Optional.of(new PlacementPlan(origin.get(), rotation, rotatedSize));
+			}
+		}
+		return Optional.empty();
+	}
+
+	private Optional<BlockPos> bridgeOrigin(Context context, Vec3i size) {
+		boolean alongZ = size.getZ() >= size.getX();
+		int length = alongZ ? size.getZ() : size.getX();
+		int width = alongZ ? size.getX() : size.getZ();
+		if (length < 6 || width < 1) {
+			return Optional.empty();
+		}
+
+		int chunkStartX = context.chunkPos().getStartX();
+		int chunkStartZ = context.chunkPos().getStartZ();
+		int seaLevel = context.chunkGenerator().getSeaLevel();
+		int requiredBankBlocks = Math.max(2, Math.min(width, width / 2 + 1));
+
+		for (int attempt = 0; attempt < 48; attempt++) {
+			int minorCenter = context.random().nextInt(16);
+			int majorStart = context.random().nextInt(16);
+			BlockPos origin = alongZ
+				? new BlockPos(chunkStartX + minorCenter - width / 2, 0, chunkStartZ + majorStart)
+				: new BlockPos(chunkStartX + majorStart, 0, chunkStartZ + minorCenter - width / 2);
+
+			BridgeBank startBank = bridgeBank(context, origin, alongZ, 0, width, seaLevel);
+			if (startBank.solidBlocks() < requiredBankBlocks) {
+				continue;
+			}
+			BridgeBank endBank = bridgeBank(context, origin, alongZ, length - 1, width, seaLevel);
+			if (endBank.solidBlocks() < requiredBankBlocks || Math.abs(startBank.averageY() - endBank.averageY()) > 3) {
+				continue;
+			}
+			if (!bridgeWaterPassage(context, origin, alongZ, length, width, seaLevel)) {
+				continue;
+			}
+
+			int y = Math.max(seaLevel + 1, (startBank.averageY() + endBank.averageY()) / 2 - 1);
+			return Optional.of(new BlockPos(origin.getX(), y, origin.getZ()));
+		}
+		return Optional.empty();
+	}
+
+	private BridgeBank bridgeBank(Context context, BlockPos origin, boolean alongZ, int majorOffset, int width, int seaLevel) {
+		int solid = 0;
+		int totalY = 0;
+		for (int minorOffset : bridgeMinorOffsets(width)) {
+			int x = alongZ ? origin.getX() + minorOffset : origin.getX() + majorOffset;
+			int z = alongZ ? origin.getZ() + majorOffset : origin.getZ() + minorOffset;
+			Optional<Integer> bankY = bridgeBankY(context, x, z, seaLevel);
+			if (bankY.isPresent()) {
+				solid++;
+				totalY += bankY.get();
+			}
+		}
+		return new BridgeBank(solid, solid == 0 ? seaLevel + 1 : totalY / solid);
+	}
+
+	private Optional<Integer> bridgeBankY(Context context, int x, int z, int seaLevel) {
+		if (bridgeIsWater(context, x, z, seaLevel)) {
+			return Optional.empty();
+		}
+		RegistryEntry<Biome> biome = biomeAt(context, x, seaLevel, z);
+		if (biome.isIn(BiomeTags.IS_OCEAN)) {
+			return Optional.empty();
+		}
+		int y = context.chunkGenerator().getHeight(x, z, Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, context.world(), context.noiseConfig());
+		return y >= seaLevel && y <= seaLevel + 5 ? Optional.of(y) : Optional.empty();
+	}
+
+	private boolean bridgeWaterPassage(Context context, BlockPos origin, boolean alongZ, int length, int width, int seaLevel) {
+		int waterStart = Math.max(1, Math.min(length - 2, length / 5));
+		int waterEnd = Math.max(waterStart, length - 1 - waterStart);
+		int checks = 0;
+		int water = 0;
+		int step = Math.max(1, (waterEnd - waterStart + 1) / 10);
+		for (int majorOffset = waterStart; majorOffset <= waterEnd; majorOffset += step) {
+			for (int minorOffset : bridgeMinorOffsets(width)) {
+				int x = alongZ ? origin.getX() + minorOffset : origin.getX() + majorOffset;
+				int z = alongZ ? origin.getZ() + majorOffset : origin.getZ() + minorOffset;
+				checks++;
+				if (bridgeIsWater(context, x, z, seaLevel)) {
+					water++;
+				}
+			}
+		}
+		return checks > 0 && water * 100 >= checks * 85;
+	}
+
+	private boolean bridgeIsWater(Context context, int x, int z, int seaLevel) {
+		RegistryEntry<Biome> biome = biomeAt(context, x, seaLevel, z);
+		if (biome.isIn(BiomeTags.IS_OCEAN)) {
+			return false;
+		}
+		int floorY = context.chunkGenerator().getHeight(x, z, Heightmap.Type.OCEAN_FLOOR_WG, context.world(), context.noiseConfig());
+		int surfaceY = context.chunkGenerator().getHeight(x, z, Heightmap.Type.WORLD_SURFACE_WG, context.world(), context.noiseConfig());
+		return floorY <= seaLevel && surfaceY <= seaLevel + 1;
+	}
+
+	private List<Integer> bridgeMinorOffsets(int width) {
+		List<Integer> offsets = new ArrayList<>();
+		int center = width / 2;
+		int radius = Math.min(center, 3);
+		for (int offset = center - radius; offset <= center + radius && offset < width; offset++) {
+			if (offset >= 0) {
+				offsets.add(offset);
+			}
+		}
+		if (offsets.isEmpty()) {
+			offsets.add(0);
+		}
+		return offsets;
 	}
 
 	private BlockPos landOrigin(Context context, BlockPos footprintOrigin, Vec3i size, CommunityStructureConfig config) {
@@ -336,6 +476,7 @@ public final class CommunityConfiguredStructure extends Structure {
 		return switch (preset) {
 			case SURFACE_RUIN -> SURFACE_RUIN_SALT;
 			case BURIED_RUIN -> BURIED_RUIN_SALT;
+			case BRIDGE -> BRIDGE_SALT;
 			default -> switch (category) {
 				case LAND -> LAND_SALT;
 				case WATER -> WATER_SALT;
@@ -361,5 +502,11 @@ public final class CommunityConfiguredStructure extends Structure {
 
 	private PlacementPreset preset() {
 		return preset;
+	}
+
+	private record PlacementPlan(BlockPos origin, BlockRotation rotation, Vec3i rotatedSize) {
+	}
+
+	private record BridgeBank(int solidBlocks, int averageY) {
 	}
 }

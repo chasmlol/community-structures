@@ -121,10 +121,24 @@ public final class CommunityStructureCache {
 		}
 
 		prefetchSoon();
-		if (!remoteExhausted.contains(category)) {
+		if (!remoteExhausted.contains(category) && hasQueuedUnusedFor(category, preset, biomeId)) {
 			return Optional.empty();
 		}
 		return chooseLocal(category, preset, random, biomeId, true);
+	}
+
+	private boolean hasQueuedUnusedFor(StructureCategory category, PlacementPreset preset, String biomeId) {
+		pruneReadyQueue(category);
+		for (String queuedId : readyQueues.getOrDefault(category, new CopyOnWriteArrayList<>())) {
+			CachedStructure choice = findCached(category, queuedId);
+			if (choice == null || hasGenerated(category, choice.id()) || reserved.contains(choice.id())) {
+				continue;
+			}
+			if (choice.canSpawnIn(biomeId) && (preset == null || choice.placementPreset() == preset)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private Optional<CachedStructure> chooseLocal(StructureCategory category, PlacementPreset preset, net.minecraft.util.math.random.Random random, String biomeId, boolean allowAlreadyGenerated) {

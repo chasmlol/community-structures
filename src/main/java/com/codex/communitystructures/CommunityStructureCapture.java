@@ -88,6 +88,8 @@ public final class CommunityStructureCapture {
 				cancel(context.player());
 			} else if (payload.action() == CommunityStructureCapturePackets.ACTION_TOGGLE_ALL_BLOCKS) {
 				toggle(context.player(), CaptureMode.ALL_BLOCKS);
+			} else if (payload.action() == CommunityStructureCapturePackets.ACTION_TOGGLE_BRIDGE) {
+				toggle(context.player(), CaptureMode.BRIDGE);
 			} else {
 				toggle(context.player(), CaptureMode.TRACKED);
 			}
@@ -224,7 +226,7 @@ public final class CommunityStructureCapture {
 
 		String name = captureName(player);
 		player.sendMessage(Text.literal("Uploading " + selected.blocks().size() + " captured blocks to the structure database..."), false);
-		upload(player, name, nbt, selected.blocks().size());
+		upload(player, name, nbt, selected.blocks().size(), capture.mode().placementPreset());
 	}
 
 	private static void cancel(ServerPlayerEntity player) {
@@ -236,6 +238,7 @@ public final class CommunityStructureCapture {
 	private static CapturedStructure collect(ServerWorld world, ActiveCapture capture) {
 		return switch (capture.mode()) {
 			case TRACKED -> collectTracked(world, capture);
+			case BRIDGE -> collectTracked(world, capture);
 			case ALL_BLOCKS -> collectAllBlocks(world, capture);
 		};
 	}
@@ -347,7 +350,7 @@ public final class CommunityStructureCapture {
 		return list;
 	}
 
-	private static void upload(ServerPlayerEntity player, String name, byte[] nbt, int blockCount) {
+	private static void upload(ServerPlayerEntity player, String name, byte[] nbt, int blockCount, PlacementPreset placementPreset) {
 		CommunityStructureConfig config = CommunityStructures.config();
 		if (config == null) {
 			player.sendMessage(Text.literal("Capture upload failed: config is not loaded."), false);
@@ -361,7 +364,7 @@ public final class CommunityStructureCapture {
 			.header("x-structure-name", safeHeader(name))
 			.header("x-original-name", safeHeader(name + ".nbt"))
 			.header("x-structure-category", "land")
-			.header("x-placement-preset", PlacementPreset.SURFACE_HOUSE.apiName())
+			.header("x-placement-preset", placementPreset.apiName())
 			.header("x-creator-name", safeHeader(player.getGameProfile().getName()))
 			.header("x-creator-id", player.getUuidAsString())
 			.POST(HttpRequest.BodyPublishers.ofByteArray(nbt))
@@ -429,6 +432,7 @@ public final class CommunityStructureCapture {
 
 	private enum CaptureMode {
 		TRACKED("tracked player-placed blocks", "K", "Selected a 20x20x20 capture box, but it has 0 tracked player-placed blocks. Use L if you want to capture every block in the area.", "Capture cancelled: no tracked player-placed blocks were found in that 20x20x20 area."),
+		BRIDGE("tracked bridge blocks", "N", "Selected a 20x20x20 bridge capture box, but it has 0 tracked player-placed blocks.", "Capture cancelled: no tracked bridge blocks were found in that 20x20x20 area."),
 		ALL_BLOCKS("non-air blocks", "L", "Selected a 20x20x20 capture box, but it has 0 non-air blocks.", "Capture cancelled: no non-air blocks were found in that 20x20x20 area.");
 
 		private final String label;
@@ -457,6 +461,10 @@ public final class CommunityStructureCapture {
 
 		private String cancelMessage() {
 			return cancelMessage;
+		}
+
+		private PlacementPreset placementPreset() {
+			return this == BRIDGE ? PlacementPreset.BRIDGE : PlacementPreset.SURFACE_HOUSE;
 		}
 	}
 

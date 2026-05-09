@@ -7,6 +7,7 @@ public enum PlacementPreset {
 	SURFACE_HOUSE("surface_structure"),
 	SURFACE_RUIN("surface_ruin"),
 	BURIED_RUIN("buried_ruin"),
+	BRIDGE("bridge"),
 	OCEAN_FLOOR("ocean_floor"),
 	CAVE_ROOM("cave_room");
 
